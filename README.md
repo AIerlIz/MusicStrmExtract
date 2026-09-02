@@ -16,11 +16,13 @@ Emby 对音乐库中的 `.strm` 文件**不执行媒体探测** → 无法读取
 4. **写回**:更新 Audio 条目(Name/Album/Artists/AlbumArtists/年份/曲号/碟号/流派/ProviderIds),并下载在线封面到 strm 所在专辑目录 `cover.jpg`。
 5. **促成组织**:有变更时自动排队库扫描,让 Emby 生成 MusicAlbum / MusicArtist 并挂载专辑封面。
 6. **专辑补写**:库状态稳定后,把同专辑音轨收集到的 MusicBrainz Album / ReleaseGroup MBID 与缺失年份补写到 MusicAlbum 条目,并对补到 MBID 的专辑触发一次刷新(让 Emby MusicBrainz 抓取器取回完整专辑详情)。
+7. **原生 Provider 即时填充**:注册 `ICustomMetadataProvider<Audio>` —— 新 strm 在**入库扫描/任何刷新**时由 Emby 调用插件探测目标,标题/专辑/艺术家等**即时生效**,随后 Emby 原生完成专辑/艺术家归组(实测:新专辑入库一次扫描即生成 MusicAlbum/MusicArtist)。
 
 ## 触发方式(不需要计划任务)
 
-- **自动**:插件注册 `ILibraryPostScanTask` —— 每当 Emby 完成一次媒体库扫描(含新 strm 入库触发的自动扫描)即自动处理,无需任何手动/定时操作。
-- **手动**:管理页 → 计划任务 → “Music Strm 元数据提取” 仍保留,可随时手动运行;默认不再注册定时触发器(避免与自动触发重复),如需要定时可在计划任务页自行添加。
+- **入库即刮削**:插件注册 `ICustomMetadataProvider<Audio>` —— 新 .strm 入库触发的媒体库扫描、以及任何"刷新元数据"操作(UI/API)都会调用插件对目标做探测并即时填充字段,随后 Emby 原生组织专辑/艺术家。
+- **自动兜底**:`ILibraryPostScanTask` 在每次库扫描完成后自动执行完整处理(在线补全/写回/封面/专辑补写),并对"已填专辑名但未归组"的条目再排一次组织扫描(带 180s 限流防循环)。
+- **手动**:管理页 → 计划任务 → “Music Strm 元数据提取” 保留,可手动全量运行;默认不注册定时触发器。
 
 ## 实测结果(Emby 4.9.5.0)
 
@@ -69,6 +71,7 @@ dotnet test tests/MusicStrmExtract.Tests/MusicStrmExtract.Tests.csproj   # 本�
 
 ## 已知限制
 
+- **签名时效**:strm 直链若带时效签名(如示例的 `sign`),过期后探测将失败(日志提示"探测无标签/失败");重新生成 strm(刷新签名)后会自动恢复。
 - **MusicBrainz 可达性**:在华语网络环境下 `musicbrainz.org` 可能繁忙/不可达;插件会自动熔断并降级 iTunes(实测全部走 iTunes 兜底成功)。MB 恢复后优先 MBID 路径自动生效。
 - **iTunes 仅补专辑侧**:其 `trackName` 为罗马音译,设计上**不覆盖**内嵌中文标题;若需要纯英文标题可自行修改 `MergePolicy`。
 - **内嵌封面兜底**:当前封面来源为在线封面(MB Cover Art Archive / iTunes);若在线无封面而目标内嵌封面,尚未提取(计划增强)。

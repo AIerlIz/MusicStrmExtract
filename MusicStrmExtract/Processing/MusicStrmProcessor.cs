@@ -30,6 +30,20 @@ namespace MusicStrmExtract.Processing
         private const string TagPrefix = "[MusicStrmExtract]";
 
         private static readonly SemaphoreSlim RunGate = new SemaphoreSlim(1, 1);
+        private static DateTime _lastQueuedLibraryScanUtc = DateTime.MinValue;
+
+        /// <summary>组织扫描限流:两次排队至少间隔 180s,防止"始终无法归组的条目"导致无限循环扫描。</summary>
+        private static bool TryQueueLibraryScan()
+        {
+            var now = DateTime.UtcNow;
+            if (now - _lastQueuedLibraryScanUtc < TimeSpan.FromSeconds(180))
+            {
+                return false;
+            }
+
+            _lastQueuedLibraryScanUtc = now;
+            return true;
+        }
 
         private readonly ILibraryManager _libraryManager;
         private readonly ILogManager _logManager;
@@ -205,11 +219,22 @@ namespace MusicStrmExtract.Processing
                 }
             }
 
-            // 4) 有变更则排队库扫描(Album/Artist 实体需在扫描后生成)
-            if (writtenCount > 0)
+            // 4) 触发组织扫描:有写回变更,或存在"已填专辑名却尚未归组(MusicAlbum 关联)"的 strm Audio
+            //    (Provider 在入库刷新中先行填充字段时,写回变更可能为 0,需据此补一次扫描促成音乐索引)
+            var needOrganize = strmAudios.Count(a =>
+                !string.IsNullOrWhiteSpace(a.Album) && a.AlbumId == 0);
+
+            if (writtenCount > 0 || needOrganize > 0)
             {
-                _logger.Info($"{TagPrefix} 有 {writtenCount} 条发生变更,排队触发库扫描以促成专辑/艺术家组织(专辑补写将在下次稳定运行进行)。");
-                _libraryManager.QueueLibraryScan();
+                if (TryQueueLibraryScan())
+                {
+                    _logger.Info($"{TagPrefix} 写回变更={writtenCount}, 待组织条目={needOrganize} -> 排队触发库扫描以促成专辑/艺术家组织(专辑补写将在下次稳定运行进行)。");
+                    _libraryManager.QueueLibraryScan();
+                }
+                else
+                {
+                    _logger.Info($"{TagPrefix} 写回变更={writtenCount}, 待组织条目={needOrganize} -> 距上次组织扫描不足 180s,跳过本次排队(等待上次扫描结果,避免循环扫描)。");
+                }
             }
             else
             {
@@ -221,12 +246,12 @@ namespace MusicStrmExtract.Processing
                         .RunAsync(cancellationToken).ConfigureAwait(false);
                 }
 
-                _logger.Info($"{TagPrefix} 汇总: 总数={total}, 探测成功={okCount}, 写回变更=0, 专辑补写={albumUpdated}, 封面已就绪={coverWrittenCount}, 失败={failCount}");
+                _logger.Info($"{TagPrefix} 汇总: 总数={total}, 探测成功={okCount}, 写回变更=0, 待组织条目=0, 专辑补写={albumUpdated}, 封面已就绪={coverWrittenCount}, 失败={failCount}");
                 progress.Report(100);
                 return;
             }
 
-            _logger.Info($"{TagPrefix} 汇总: 总数={total}, 探测成功={okCount}, 写回变更={writtenCount}, 封面落盘={coverWrittenCount}, 失败={failCount}");
+            _logger.Info($"{TagPrefix} 汇总: 总数={total}, 探测成功={okCount}, 写回变更={writtenCount}, 待组织条目={needOrganize}, 封面落盘={coverWrittenCount}, 失败={failCount}");
             progress.Report(100);
         }
 
