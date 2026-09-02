@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net.Http;
 using System.Text.Json;
@@ -10,6 +11,7 @@ namespace MusicStrmExtract.Online
     /// <summary>
     /// MusicBrainz Web Service 客户端。遵守 1 req/s 限速与规范 User-Agent。
     /// 端点默认官方 https://musicbrainz.org;可传入镜像(如 https://musicbrainz.emby.tv)。
+    /// 按 URL 缓存响应正文(会话级),避免脏标签导致同一 MBID 重复请求。
     /// </summary>
     public sealed class MusicBrainzApi : IDisposable
     {
@@ -21,6 +23,7 @@ namespace MusicStrmExtract.Online
 
         private readonly HttpClient _http;
         private readonly string _baseUrl;
+        private readonly ConcurrentDictionary<string, string> _responseCache = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
 
         public MusicBrainzApi(string? baseUrl = null, int timeoutSeconds = 25)
         {
@@ -59,6 +62,12 @@ namespace MusicStrmExtract.Online
 
         private async Task<JsonElement> GetJsonRootAsync(string url, CancellationToken ct)
         {
+            if (_responseCache.TryGetValue(url, out var cached))
+            {
+                using var cachedDoc = JsonDocument.Parse(cached);
+                return cachedDoc.RootElement.Clone();
+            }
+
             await ThrottleAsync(ct).ConfigureAwait(false);
             using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
@@ -66,6 +75,8 @@ namespace MusicStrmExtract.Online
             {
                 throw new HttpRequestException($"MusicBrainz HTTP {(int)response.StatusCode}: {Truncate(body, 200)}");
             }
+
+            _responseCache.TryAdd(url, body);
 
             using var doc = JsonDocument.Parse(body);
             return doc.RootElement.Clone();
