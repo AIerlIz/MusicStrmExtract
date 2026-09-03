@@ -104,7 +104,6 @@ namespace MusicStrmExtract.Probing
             psi.ArgumentList.Add("-print_format");
             psi.ArgumentList.Add("json");
             psi.ArgumentList.Add("-show_format");
-            psi.ArgumentList.Add("-show_streams");
             psi.ArgumentList.Add(url);
 
             try

@@ -73,8 +73,7 @@ namespace MusicStrmExtract.Metadata
                 MusicBrainzAlbumId = source.MusicBrainzAlbumId,
                 MusicBrainzArtistId = source.MusicBrainzArtistId,
                 MusicBrainzAlbumArtistId = source.MusicBrainzAlbumArtistId,
-                MusicBrainzReleaseGroupId = source.MusicBrainzReleaseGroupId,
-                HasEmbeddedCover = source.HasEmbeddedCover
+                MusicBrainzReleaseGroupId = source.MusicBrainzReleaseGroupId
             };
             result.Artists.AddRange(source.Artists);
             result.AlbumArtists.AddRange(source.AlbumArtists);

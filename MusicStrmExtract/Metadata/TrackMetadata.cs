@@ -37,9 +37,6 @@ namespace MusicStrmExtract.Metadata
 
         public string? MusicBrainzReleaseGroupId { get; set; }
 
-        /// <summary>目标文件是否内嵌封面图(attached_pic)。</summary>
-        public bool HasEmbeddedCover { get; set; }
-
         /// <summary>文本类字段是否有任何内容(判断是否"可识别")。</summary>
         public bool HasAnyText =>
             !string.IsNullOrWhiteSpace(Title)

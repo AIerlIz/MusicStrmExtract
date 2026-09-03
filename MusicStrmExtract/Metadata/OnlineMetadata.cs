@@ -31,19 +31,6 @@ namespace MusicStrmExtract.Metadata
         /// <summary>来源名称(MusicBrainz / 内嵌)。</summary>
         public string Source { get; set; } = string.Empty;
 
-        public string? RecordingMbid { get; set; }
-
-        public string? ReleaseMbid { get; set; }
-
-        public string? ReleaseGroupMbid { get; set; }
-
-        public string? ArtistMbid { get; set; }
-
-        public string? AlbumArtistMbid { get; set; }
-
-        /// <summary>封面图 URL(如有)。</summary>
-        public string? CoverArtUrl { get; set; }
-
         /// <summary>命中说明(供日志/人工排查)。</summary>
         public string? Note { get; set; }
 

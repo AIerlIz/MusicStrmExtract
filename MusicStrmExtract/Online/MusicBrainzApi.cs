@@ -33,17 +33,15 @@ namespace MusicStrmExtract.Online
             _http.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
         }
 
-        /// <summary>GET recording by MBID, inc=releases+artist-credits+release-groups。失败抛异常。</summary>
+        /// <summary>GET recording by MBID, inc=releases+artist-credits。失败抛异常。</summary>
         public async Task<JsonElement> GetRecordingAsync(string recordingMbid, CancellationToken ct)
         {
             var url = $"{_baseUrl}/ws/2/recording/{Uri.EscapeDataString(recordingMbid)}?inc=releases+artist-credits&fmt=json";
             return await GetJsonRootAsync(url, ct).ConfigureAwait(false);
         }
 
-        /// <summary>按标题搜索录音, limit 条。注意:不拼 artist/album 的 AND 组合——实测 MB 对中文曲目
-        /// recording:"..." AND artist:"..." 会返回 0(艺术家字段不匹配英文名),标题单字段搜索更可靠,
-        /// 艺术家一致性由调用方在候选过滤层做宽松匹配。</summary>
-        public async Task<JsonElement> SearchRecordingsAsync(string title, string? artist, string? album, int limit, CancellationToken ct)
+        /// <summary>按标题搜索录音, limit 条。艺术家一致性由调用方在候选过滤层做宽松匹配。</summary>
+        public async Task<JsonElement> SearchRecordingsAsync(string title, int limit, CancellationToken ct)
         {
             var sb = new System.Text.StringBuilder("recording:");
             sb.Append('"').Append(title.Replace("\"", string.Empty)).Append('"');

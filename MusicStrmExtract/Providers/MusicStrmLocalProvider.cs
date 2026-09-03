@@ -194,8 +194,8 @@ namespace MusicStrmExtract.Providers
                 return false;
             }
 
-            var self = ParseStrmFileName(info.Path);
-            if (self is null || self.Number <= 0)
+            var selfNumber = ParseStrmFileName(info.Path);
+            if (selfNumber <= 0)
             {
                 return false; // 本文件无轨号,无法按轨取数
             }
@@ -224,7 +224,7 @@ namespace MusicStrmExtract.Providers
                 return false;
             }
 
-            var track = album.Tracks.FirstOrDefault(t => t.Number == self.Number);
+            var track = album.Tracks.FirstOrDefault(t => t.Number == selfNumber);
             if (track is null)
             {
                 return false;
@@ -267,7 +267,7 @@ namespace MusicStrmExtract.Providers
             string key,
             string albumFolder,
             string? artistFolder,
-            List<LocalTrack> localTracks,
+            List<int> localTracks,
             PluginConfiguration config,
             CancellationToken ct)
         {
@@ -290,8 +290,8 @@ namespace MusicStrmExtract.Providers
             return result;
         }
 
-        /// <summary>解析 strm 文件名数字前缀 → 轨号;无数字前缀时 Number=-1。</summary>
-        private static LocalTrack? ParseStrmFileName(string filePath)
+        /// <summary>解析 strm 文件名数字前缀 → 轨号;无数字前缀时返回 0。</summary>
+        private static int ParseStrmFileName(string filePath)
         {
             var name = Path.GetFileName(filePath);
             if (name.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
@@ -302,23 +302,22 @@ namespace MusicStrmExtract.Providers
             var m = StrmNumberRegex.Match(name);
             if (!m.Success)
             {
-                return null;
+                return 0;
             }
 
-            var track = new LocalTrack();
             if (m.Groups[1].Success
                 && int.TryParse(m.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var number))
             {
-                track.Number = number;
+                return number;
             }
 
-            return track;
+            return 0;
         }
 
         /// <summary>扫描专辑文件夹内全部 .strm,构建本地轨号集合(按轨号升序、去重,不读取文件名标题)。</summary>
-        private static List<LocalTrack> ScanAlbumTracks(string albumDir)
+        private static List<int> ScanAlbumTracks(string albumDir)
         {
-            var tracks = new List<LocalTrack>();
+            var tracks = new List<int>();
             var seen = new HashSet<int>();
             try
             {
@@ -329,13 +328,13 @@ namespace MusicStrmExtract.Providers
                         continue;
                     }
 
-                    var t = ParseStrmFileName(f);
-                    if (t is null || t.Number <= 0 || !seen.Add(t.Number))
+                    var number = ParseStrmFileName(f);
+                    if (number <= 0 || !seen.Add(number))
                     {
                         continue;
                     }
 
-                    tracks.Add(t);
+                    tracks.Add(number);
                 }
             }
             catch (Exception)
@@ -343,7 +342,7 @@ namespace MusicStrmExtract.Providers
                 return tracks;
             }
 
-            tracks.Sort((a, b) => a.Number.CompareTo(b.Number));
+            tracks.Sort();
             return tracks;
         }
 
@@ -377,7 +376,6 @@ namespace MusicStrmExtract.Providers
             }
 
             var md = TagParser.Parse(probe.Tags);
-            md.HasEmbeddedCover = probe.HasEmbeddedCover;
             if (md.IsEmpty)
             {
                 return result;

@@ -9,13 +9,6 @@ using System.Threading.Tasks;
 
 namespace MusicStrmExtract.Online
 {
-    /// <summary>本地专辑指纹中的一个轨号(来自 strm 文件名数字前缀)。</summary>
-    public sealed class LocalTrack
-    {
-        /// <summary>轨号(文件名数字前缀;解析不出为 -1)。</summary>
-        public int Number { get; set; } = -1;
-    }
-
     /// <summary>MB release 选定 media(碟)轨道映射中的一轨。</summary>
     public sealed class AlbumTrack
     {
@@ -34,8 +27,6 @@ namespace MusicStrmExtract.Online
         /// <summary>该轨艺人 MBID(artist-credit 首个)。</summary>
         public string? ArtistMbid { get; set; }
 
-        /// <summary>时长(秒,recording.length 毫秒换算)。</summary>
-        public int? LengthSeconds { get; set; }
     }
 
     /// <summary>release 响应(inc=recordings)中解析出的一张 media(碟)。</summary>
@@ -111,12 +102,12 @@ namespace MusicStrmExtract.Online
         public async Task<AlbumSearchResult> SearchForTrackMapAsync(
             string albumFolderName,
             string? artistName,
-            IReadOnlyList<LocalTrack> localTracks,
+            IReadOnlyList<int> localTrackNumbers,
             CancellationToken ct)
         {
             var result = new AlbumSearchResult();
             var clean = CleanAlbumName(albumFolderName);
-            if (string.IsNullOrWhiteSpace(clean) || localTracks is null || localTracks.Count == 0)
+            if (string.IsNullOrWhiteSpace(clean) || localTrackNumbers is null || localTrackNumbers.Count == 0)
             {
                 return result;
             }
@@ -170,7 +161,7 @@ namespace MusicStrmExtract.Online
             var releaseRoot = await _api.GetReleaseAsync(releaseMbid, ct).ConfigureAwait(false);
 
             var medias = ParseReleaseMedias(releaseRoot);
-            var chosen = SelectBestMedia(localTracks, medias);
+            var chosen = SelectBestMedia(localTrackNumbers, medias);
             if (chosen is null)
             {
                 return result;
@@ -220,12 +211,6 @@ namespace MusicStrmExtract.Online
                             ? n
                             : GetInt(t, "position");
                         track.Title = GetString(t, "title");
-                        var length = GetInt(t, "length");
-                        if (length > 0)
-                        {
-                            track.LengthSeconds = length / 1000;
-                        }
-
                         if (t.TryGetProperty("recording", out var rec))
                         {
                             track.RecordingMbid = GetString(rec, "id");
@@ -260,15 +245,14 @@ namespace MusicStrmExtract.Online
         ///   MV/附加碟因轨号缺失被淘汰)。本地轨号只来自文件名数字前缀,不读取文件名标题。
         /// 在通过的 media 中取 Position 最小者;无通过返回 null。
         /// </summary>
-        public static ReleaseMedia? SelectBestMedia(IReadOnlyList<LocalTrack> localTracks, IReadOnlyList<ReleaseMedia> medias)
+        public static ReleaseMedia? SelectBestMedia(IReadOnlyList<int> localTrackNumbers, IReadOnlyList<ReleaseMedia> medias)
         {
-            if (localTracks is null || localTracks.Count == 0 || medias is null || medias.Count == 0)
+            if (localTrackNumbers is null || localTrackNumbers.Count == 0 || medias is null || medias.Count == 0)
             {
                 return null;
             }
 
-            var localNumbers = localTracks
-                .Select(t => t.Number)
+            var localNumbers = localTrackNumbers
                 .Where(n => n > 0)
                 .Distinct()
                 .ToArray();

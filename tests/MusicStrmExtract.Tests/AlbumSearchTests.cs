@@ -38,7 +38,6 @@ namespace MusicStrmExtract.Tests
             Assert.Equal(1, medias[0].Tracks[0].Number);
             Assert.Equal("我的地盤", medias[0].Tracks[0].Title);
             Assert.Equal("rec-1-1", medias[0].Tracks[0].RecordingMbid);
-            Assert.Equal(200, medias[0].Tracks[0].LengthSeconds); // 200000ms → 200s
             Assert.Equal("周杰倫", medias[0].Tracks[0].Artists.First());
             Assert.Equal("art-1", medias[0].Tracks[0].ArtistMbid);
             Assert.Equal(2, medias[1].Position);
@@ -88,7 +87,7 @@ namespace MusicStrmExtract.Tests
         public void SelectBestMedia_SelectsByNumbersOnly_WhenFileNamesHaveNoTitles()
         {
             var local = Enumerable.Range(1, 10)
-                .Select(n => new LocalTrack { Number = n })
+                .Select(n => n)
                 .ToList();
 
             var chosen = AlbumSearch.SelectBestMedia(local, AlbumSearch.ParseReleaseMedias(BuildRelease((1, Tracks(1, 10)))));
@@ -100,7 +99,7 @@ namespace MusicStrmExtract.Tests
         public void SelectBestMedia_AlignsByTrackNumber_WhenFirstTrackMissing()
         {
             var local = Enumerable.Range(2, 9)
-                .Select(n => new LocalTrack { Number = n })
+                .Select(n => n)
                 .ToList();
             var root = BuildRelease((1, Tracks(1, 10)));
 
@@ -115,7 +114,7 @@ namespace MusicStrmExtract.Tests
         {
             var local = Enumerable.Range(1, 10)
                 .Where(n => n != 5)
-                .Select(n => new LocalTrack { Number = n })
+                .Select(n => n)
                 .ToList();
             var root = BuildRelease((1, Tracks(1, 10)));
 
@@ -142,10 +141,10 @@ namespace MusicStrmExtract.Tests
 
         // ===== 测试数据构造 =====
 
-        private static List<LocalTrack> Local(int fromNumber, int count)
+        private static List<int> Local(int fromNumber, int count)
         {
             return Enumerable.Range(fromNumber, count)
-                .Select(n => new LocalTrack { Number = n })
+                .Select(n => n)
                 .ToList();
         }
 

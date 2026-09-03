@@ -1,83 +1,121 @@
 # Music Strm Extract
 
-Emby Server 插件(.NET 8):为音乐库中的 `.strm` 音频条目补全元数据,解决 **Emby 不支持对 strm 音乐做刮削** 的问题。
+Music Strm Extract 是一个面向 Emby 的插件，用来给音乐库中的 `.strm` 文件补全音乐元数据。
 
-## 问题根因
+`.strm` 文件本身只是一个文本链接，Emby 不会像普通音频文件那样探测它，所以默认只能看到一个文件名，无法生成歌手、专辑、曲目信息和 MusicBrainz ID。这个插件根据你的音乐库目录结构和文件名轨号，从 MusicBrainz 找到对应专辑和歌曲，并交给 Emby 保存、展示和归组。
 
-Emby 对音乐库中的 `.strm` 文件**不执行媒体探测** → 无法读取 strm 指向的 HTTP 直链音频文件的内嵌标签 → 条目只有裸文件名,没有标题/专辑/艺术家/MusicBrainz ID → 音乐库无法生成 MusicAlbum / MusicArtist 聚合,在线刮削器也无从匹配。
+## 功能
 
-## 插件做什么
+- 识别 `歌手 / 专辑 / 序号 - 标题.strm` 这类常规结构，自动锁定 MusicBrainz 专辑。
+- 按轨号从 MusicBrainz 官方 tracklist 取回每首歌的标题、歌手、专辑、年份和 MBID。
+- 常规结构下不依赖远程媒体探测，也不要求 `.strm` 文件内容可播放。
+- 对无法匹配常规结构的文件，自动退回 ffprobe 探测路径，读取链接指向文件的内嵌标签作为保底。
+- 扫描或刷新元数据时自动工作，不需要手动运行任务。
+- 同专辑结果缓存 30 分钟，避免重复刷新时反复请求 MusicBrainz。
+- 封面交给 Emby 从 Cover Art Archive 下载，不要求你手写 `cover.jpg`。
 
-以**标准 Emby 元数据 Provider 架构**运行(本地读取器 + 在线下载器,写回/专辑组织/封面挂载全部交给 Emby 刷新引擎,插件自身不写库),两条路径:
+## 推荐目录结构
 
-1. **主路径·专辑轨道定位(零探测、整专辑一次)**:strm 文件名只解析数字轨号(`01 - 我的地盤.flac.strm` → 1)并扫描专辑文件夹得到本地轨号集合,不读取文件名标题;按"艺人文件夹 + 专辑文件夹名"作为查询词锁定 MusicBrainz release,用本地轨号覆盖**校验并选择 media(碟)**,随后单曲**按轨号直接取该专辑 tracklist 的 recording MBID/标题/艺人**——整条主路径不做本地文本比较、不做字形转换,不依赖内嵌标签,recording MBID 来自 MB 专辑、天然无脏 ID。
-2. **降级路径·探测(原行为保底)**:结构不符(无 艺人/专辑 两层)、strm 文件名无轨号、专辑定位失败或轨号不在所选 tracklist 时——读取 strm 内容(URL,原样保留,含签名参数),用 ffprobe 远程探测(`-show_format -show_streams`)提取内嵌标签,再做逐曲 MusicBrainz 补全(标题搜索,候选宽松匹配);探测结果按 strm 文件修改时间缓存,重复扫描不重复探测。MB 不可达/无结果时保留内嵌字段(需自备 MB 连通,如镜像/代理)。
+为了让插件优先走“专辑 tracklist”快速路径，请把 `.strm` 放在下面这样的两层结构中：
 
-## 触发方式(无需计划任务、无需 PostScan)
-
-- **入库/刷新即处理**:插件注册的 `ILocalMetadataProvider` 由 Emby 刷新引擎在**新 .strm 入库扫描、媒体库扫描、任何"刷新元数据"操作**时自动调用;专辑轨道定位(或降级探测) → 引擎持久化与专辑归组,全程标准流程,无自写库、无双写循环。整专辑定位结果 30 分钟缓存,同专辑重复刷新零额外 MusicBrainz 请求。
-- 刷新引擎自带 remote 结果缓存,重复刷新不会重复请求 MusicBrainz。
-- 无任何定时/计划任务。
-
-## 实测结果(Emby 4.9.5.0;样本库:周杰伦《七里香》《叶惠美》,`艺人/专辑/NN - 标题.strm` 结构)
-
-- 21 条 strm:文件系统结构规整率 **21/21**;文件名轨号可解析率 **21/21**(两专辑轨号 `1..N` 无缺无重)。
-- **主路径专辑定位 21/21**:简体艺人/专辑文件夹名(`周杰伦`/`叶惠美`)→ MB release 查询直接命中官方繁体 release(artist `a223958d` 周杰倫);本地轨号覆盖校验通过后按轨号取 recording,每轨 MBID 真实可取;**全程零远程 ffprobe 探测、零逐曲文本搜索**。
-- 多碟验证:两专辑的 MB 附加碟(MV,轨号未覆盖本地轨号集合)被正确排除,只取主 CD。
-- 降级路径(原探测/逐曲)保留可用:结构或轨号不满足的条目自动回落;MB 不可达/无结果时保留内嵌字段。
-- **循环根治**:旧版 Provider+PostScan 双写不一致导致的循环已随重构移除;写回与组织由 Emby 引擎单点完成。
-- 专辑组织:写入由引擎统一持久化后,Emby 原生生成/刷新 `MusicAlbum` / `MusicArtist`;专辑 MBID 由插件直写(主路径)或 Emby 内置 MusicBrainz 抓取器(降级路径)在刷新时写入可达专辑。
-
-## 构建
-
-需要 .NET SDK(8.0+;本机用 10.0 交叉构建 net8.0 验证通过)。
-
-```bash
-dotnet build MusicStrmExtract/MusicStrmExtract.csproj -c Release
-dotnet test tests/MusicStrmExtract.Tests/MusicStrmExtract.Tests.csproj   # 本机无 .NET 8 运行时需: DOTNET_ROLL_FORWARD=LatestMajor
+```text
+音乐库/
+  周杰伦/
+    叶惠美 (2003)/
+      01 - 以父之名.flac.strm
+      02 - 懦夫.flac.strm
+      ...
+    七里香 (2004)/
+      01 - 我的地盤.flac.strm
+      02 - 七里香.flac.strm
+      ...
 ```
 
-产物:`MusicStrmExtract/bin/Release/` 下的 `MusicStrmExtract.dll`(无外部依赖)
+要点：
 
-## 部署
+- 第一层是歌手文件夹，第二层是专辑文件夹，`.strm` 直接放在专辑文件夹里。
+- 文件名前面是轨号，例如 `01 - `。轨号不要求和 Emby 内部曲目序号一致，但应当和 MusicBrainz 专辑的 track number 一致。
+- 一张专辑内的轨号建议连续且不重复。
+- 文件名标题部分不会被插件用来匹配，可以简写或省略；真正用于锁定专辑的是“歌手文件夹 + 专辑文件夹名”。
+- 专辑文件夹名带年份也可以，例如 `叶惠美 (2003)`、`七里香-2004`，插件会自动去掉年份后缀。
 
-1. 复制 `MusicStrmExtract.dll` 到 Emby 的 `plugins` 目录:
-   - Windows 便携版示例:`C:\Users\<user>\AppData\Roaming\Emby-Server\programdata\plugins\`
-   - 其它安装(Docker/Linux)对应其 `plugins` 目录。
+如果你的 `.strm` 不在这种结构中，或者缺少轨号，插件会自动尝试降级路径：读取 `.strm` 中的 URL，用 ffprobe 探测远程文件的内嵌标签，再做逐曲 MusicBrainz 补全。
+
+## 安装
+
+1. 将构建产物 `MusicStrmExtract.dll` 复制到 Emby 的插件目录。
+
+   Windows 示例：
+
+   ```text
+   C:\Users\<用户名>\AppData\Roaming\Emby-Server\programdata\plugins\
+   ```
+
+   Docker/Linux 安装请放到 Emby 对应的 `plugins` 目录。
+
 2. 重启 Emby Server。
-3. 确认:插件在每次媒体库扫描后自动处理(无需操作);管理页 → 计划任务 → “Music Strm 元数据提取” 可手动运行。
+3. 在 Emby 插件列表中确认出现 “Music Strm Extract”。
+
+插件没有外部 DLL 依赖，只复制主 DLL 即可。
+
+## 使用方式
+
+插件会在以下时机自动处理：
+
+- 新 `.strm` 文件入库扫描；
+- 媒体库扫描；
+- 手动对音频条目执行“刷新元数据”。
+
+不需要创建计划任务，也不需要手动运行任何后台任务。
+
+如果你要验证效果，最简单的方式是：
+
+1. 将音乐库保持为推荐目录结构。
+2. 在 Emby 中执行一次媒体库扫描或刷新音频元数据。
+3. 打开 Audio 或 MusicAlbum，检查标题、歌手、专辑、年份、封面和 MusicBrainz 信息是否已经出现。
+
+如果刷新前 Emby 里已经存在同名 MusicAlbum，旧的专辑归属关系可能不会自动重建。此时可以在 Emby 中删除对应 MusicAlbum 实体，再重新扫描媒体库。
 
 ## 配置
 
-配置文件由 Emby 在**插件配置目录**生成/读取(注意:是 `plugins/configurations/`,不是 `config/plugins/`):
+插件配置文件位于 Emby 的插件配置目录：
 
-- Windows 便携版:`<data>\programdata\plugins\configurations\MusicStrmExtract.xml`
-- 也可用 API:`POST /emby/Plugins/{pluginId}/Configuration`(body 为完整 JSON)。
+```text
+<Emby 数据目录>/plugins/configurations/MusicStrmExtract.xml
+```
 
-| 项 | 默认 | 说明 |
+也可以通过 Emby 插件配置页面修改。以下字段可用：
+
+| 配置项 | 默认值 | 说明 |
 |---|---|---|
-| `FfprobePath` | 空 | ffprobe 完整路径;空则自动查找(Emby system 目录 → PATH) |
-| `ExtraHeaders` | 空 | 每行 `Header: value` 的自定义 HTTP 头(防盗链 UA/Referer),传给 ffprobe |
-| `ProbeTimeoutSeconds` | 30 | 单次远程探测超时(秒) |
-| `EnableOnlineMetadata` | true | 在线补全(MusicBrainz)总开关 |
-| `MusicBrainzBaseUrl` | 空 | MusicBrainz 端点;空=官方 `https://musicbrainz.org`(官方源在华语网络间歇 503),建议填稳定镜像如 `https://musicbrainz.emby.tv` |
+| `MusicBrainzBaseUrl` | 空 | MusicBrainz 服务地址。留空使用官方 `https://musicbrainz.org`；网络不稳定时建议填写镜像，例如 `https://musicbrainz.emby.tv` |
+| `EnableOnlineMetadata` | true | 是否启用 MusicBrainz 在线补全。关闭后只保留 ffprobe 能读到的内嵌标签 |
+| `FfprobePath` | 空 | ffprobe 完整路径。留空时插件会自动在 Emby 运行目录和 PATH 中查找 |
+| `ExtraHeaders` | 空 | 探测远程文件时附加的 HTTP 请求头，每行一个 `Header: value`，用于防盗链场景 |
+| `ProbeTimeoutSeconds` | 30 | 每次 ffprobe 探测的超时时间（秒） |
 
-## 已知限制
+`ExtraHeaders` 示例：
 
-- **签名时效**:strm 直链若带时效签名(如示例的 `sign`),过期后探测将失败(本地 Provider 返回空,条目保持现状);重新生成 strm(刷新签名)后自动恢复。
-- **MusicBrainz 可达性(需自备)**:在华语网络环境下 `musicbrainz.org` 可能繁忙/不可达;此时远程 Provider **不做在线补全**(保留内嵌字段,不降级其它数据源)。请自行保证 MB 连通(镜像 `musicbrainz.emby.tv` / 代理 / hosts),MB 恢复后 MBID 路径自动生效。
-- 无 iTunes 兜底:在线元数据仅来自 MusicBrainz(用户约定);故 MB 不可达时专辑/封面等在线字段不会补全,条目保持内嵌字段。
-- **封面**:由远程 Provider 的 `GetImages` 交给 Emby 引擎下载挂图(指向 Cover Art Archive,需 MB 连通);不再手写 `cover.jpg`。
-- **专辑归属(AlbumId)为平台只读**:Emby 4.9 中 `Audio.AlbumId` 只读、音乐索引不对已关联条目重新归组。插件在线命中时会**直写真实条目的 `Album`/`AlbumArtists` 字符串**(保证 DB 一致,便于后续清理实体后重扫),但 API 显示与 MusicAlbum 组织仍由 Emby 内部的 `AlbumId` 实体关联决定;若要调整专辑归属,需在 Emby 侧删除对应 `MusicAlbum` 实体后重新扫描。
-- strm URL 必须**原样**使用(示例中的签名尾 `:0` 去掉即 401)。
-
-## 结构
-
+```text
+Referer: https://example.com
+User-Agent: MusicApp/1.0
 ```
-MusicStrmExtract/
-  Metadata/   TrackMetadata / TagParser(内嵌标签解析)/ MergePolicy(在线优先合并)/ OnlineMetadata
-  Probing/    FfprobeRunner(定位+执行)/ ProbeResult(ffprobe JSON 解析)/ ProbeCache(mtime 缓存,免重复探测)
-  Online/     MusicBrainzApi(限速/缓存/release+artist 查询与 tracklist 取回) / AlbumSearch(专辑锁定:艺人+专辑查询,轨号覆盖选碟) / OnlineResolver(降级路径逐曲编排,含熔断)
-  Providers/  MusicStrmLocalProvider(ILocalMetadataProvider:主路径轨道定位 + 降级探测) / MusicStrmRemoteProvider(IRemoteMetadataProvider,MB 在线+封面)
-tests/        xunit 单测(TagParser / ProbeResult / MergePolicy / AlbumSearch 轨道解析与选碟)
+
+## 注意事项
+
+- `.strm` 文件里的 URL 会被原样使用。请不要改动或去掉 URL 上的签名参数，否则远程探测会失败。
+- 如果链接带时效签名，签名过期后插件会暂时拿不到元数据；重新生成 `.strm` 后会自动恢复。
+- 插件只使用 MusicBrainz 作为在线数据源。MusicBrainz 不可达时不会从其它来源补全，但会尽量保留 ffprobe 读到的内嵌标签。
+- 官方 MusicBrainz 在部分地区可能不稳定，建议配置稳定的镜像或代理。
+- 主路径目前主要面向单碟专辑。多碟、分碟目录或同一专辑文件夹内轨号不唯一时，会退回到 ffprobe 探测路径。
+- 封面来自 Cover Art Archive，需要 MusicBrainz/Cover Art Archive 网络可达。
+
+## 从源码构建
+
+需要 .NET SDK 8.0 或更高版本：
+
+```bash
+dotnet build MusicStrmExtract/MusicStrmExtract.csproj -c Release
 ```
+
+构建结果位于 `MusicStrmExtract/bin/Release/MusicStrmExtract.dll`。

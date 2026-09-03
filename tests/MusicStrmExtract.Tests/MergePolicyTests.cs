@@ -22,7 +22,6 @@ namespace MusicStrmExtract.Tests
             online.Fields.Album = album;
             online.Fields.Artists.Add("Jay Chou");
             online.Fields.Year = 2004;
-            online.ReleaseMbid = "r-111";
             return online;
         }
 

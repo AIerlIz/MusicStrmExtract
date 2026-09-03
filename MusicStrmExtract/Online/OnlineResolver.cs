@@ -107,8 +107,7 @@ namespace MusicStrmExtract.Online
             var online = new OnlineMetadata
             {
                 Kind = OnlineMatchKind.ExactByMbid,
-                Source = "MusicBrainz",
-                RecordingMbid = trackMbid
+                Source = "MusicBrainz"
             };
             online.Fields.MusicBrainzTrackId = trackMbid;
 
@@ -117,18 +116,14 @@ namespace MusicStrmExtract.Online
             var release = PickRelease(root, embedded);
             if (release is not null)
             {
-                online.ReleaseMbid = GetString(release.Value, "id");
+                var releaseMbid = GetString(release.Value, "id");
                 online.Fields.Album = GetString(release.Value, "title");
                 online.Fields.Year = ParseYear(GetString(release.Value, "date"));
-                online.Fields.MusicBrainzAlbumId = online.ReleaseMbid;
-                online.CoverArtUrl = string.IsNullOrEmpty(online.ReleaseMbid)
-                    ? null
-                    : $"https://coverartarchive.org/release/{online.ReleaseMbid}/front-500";
+                online.Fields.MusicBrainzAlbumId = releaseMbid;
 
                 if (release.Value.TryGetProperty("release-group", out var rg))
                 {
-                    online.ReleaseGroupMbid = GetString(rg, "id");
-                    online.Fields.MusicBrainzReleaseGroupId = online.ReleaseGroupMbid;
+                    online.Fields.MusicBrainzReleaseGroupId = GetString(rg, "id");
                     if (online.Fields.Year is null)
                     {
                         online.Fields.Year = ParseYear(GetString(rg, "first-release-date"));
@@ -149,7 +144,7 @@ namespace MusicStrmExtract.Online
                 return new OnlineMetadata { Kind = OnlineMatchKind.None, Note = "内嵌无标题,无法文本搜索" };
             }
 
-            var root = await _musicBrainz.SearchRecordingsAsync(title, artist, embedded.Album, 8, ct).ConfigureAwait(false);
+            var root = await _musicBrainz.SearchRecordingsAsync(title, 8, ct).ConfigureAwait(false);
             if (!root.TryGetProperty("recordings", out var recordings) || recordings.GetArrayLength() == 0)
             {
                 return new OnlineMetadata { Kind = OnlineMatchKind.None, Note = "MusicBrainz 无结果" };
@@ -191,23 +186,18 @@ namespace MusicStrmExtract.Online
 
             // 即使 Ambiguous 也带出 best 候选字段(在线优先策略下会被合并层采用覆盖内嵌)
             online.Fields.Title = GetString(best.Item, "title");
-            online.RecordingMbid = GetString(best.Item, "id");
-            online.Fields.MusicBrainzTrackId = online.RecordingMbid;
+            online.Fields.MusicBrainzTrackId = GetString(best.Item, "id");
             ApplyArtistCredit(online, best.Item);
             var release = PickRelease(best.Item, embedded);
             if (release is not null)
             {
-                online.ReleaseMbid = GetString(release.Value, "id");
+                var releaseMbid = GetString(release.Value, "id");
                 online.Fields.Album = GetString(release.Value, "title");
                 online.Fields.Year = ParseYear(GetString(release.Value, "date"));
-                online.Fields.MusicBrainzAlbumId = online.ReleaseMbid;
-                online.CoverArtUrl = string.IsNullOrEmpty(online.ReleaseMbid)
-                    ? null
-                    : $"https://coverartarchive.org/release/{online.ReleaseMbid}/front-500";
+                online.Fields.MusicBrainzAlbumId = releaseMbid;
                 if (release.Value.TryGetProperty("release-group", out var rg))
                 {
-                    online.ReleaseGroupMbid = GetString(rg, "id");
-                    online.Fields.MusicBrainzReleaseGroupId = online.ReleaseGroupMbid;
+                    online.Fields.MusicBrainzReleaseGroupId = GetString(rg, "id");
                 }
             }
 
@@ -302,9 +292,9 @@ namespace MusicStrmExtract.Online
                     if (!string.IsNullOrEmpty(name))
                     {
                         online.Fields.Artists.Add(name);
-                        if (online.ArtistMbid is null)
+                        if (online.Fields.MusicBrainzArtistId is null)
                         {
-                            online.ArtistMbid = GetString(artistEl, "id");
+                            online.Fields.MusicBrainzArtistId = GetString(artistEl, "id");
                         }
                     }
                 }
@@ -317,9 +307,7 @@ namespace MusicStrmExtract.Online
 
             // artist-credit 整体即专辑艺术家
             online.Fields.AlbumArtists.AddRange(online.Fields.Artists);
-            online.AlbumArtistMbid = online.ArtistMbid;
-            online.Fields.MusicBrainzArtistId = online.ArtistMbid;
-            online.Fields.MusicBrainzAlbumArtistId = online.ArtistMbid;
+            online.Fields.MusicBrainzAlbumArtistId = online.Fields.MusicBrainzArtistId;
         }
 
         private static JsonElement? PickRelease(JsonElement recording, TrackMetadata embedded)
