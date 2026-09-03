@@ -15,18 +15,16 @@ namespace MusicStrmExtract.Online
     /// 在线元数据解析编排:
     ///   1. 内嵌标签带可信 MBID → MusicBrainz recording 精确取回(标题归一一致才判 Exact);
     ///   2. 无 MBID 或 MBID 与标题不符 → 标题+艺术家文本搜索 MusicBrainz(唯一高置信=Unique, 多候选=Ambiguous);
-    ///   3. MusicBrainz 不可达/无结果 → iTunes Search 兜底(仅补专辑/年份/封面, 不覆盖标题)。
+    ///   3. MusicBrainz 不可达/无结果 → 不产生在线命中,保留内嵌字段(无 iTunes 兜底,需自备 MB 连通)。
     /// </summary>
     public sealed class OnlineResolver : IDisposable
     {
         private readonly MusicBrainzApi _musicBrainz;
-        private readonly ITunesApi _iTunes;
         private bool _musicBrainzDown;
 
         public OnlineResolver(string? musicBrainzBaseUrl = null)
         {
             _musicBrainz = new MusicBrainzApi(musicBrainzBaseUrl);
-            _iTunes = new ITunesApi();
         }
 
         public async Task<OnlineMetadata> ResolveAsync(TrackMetadata embedded, CancellationToken ct)
@@ -44,7 +42,12 @@ namespace MusicStrmExtract.Online
                 }
                 catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
                 {
-                    _musicBrainzDown = true;
+                    // 404 = 该 MBID/查询在 MusicBrainz 无对应条目(脏 ID 属业务性无结果),不熔断,继续文本搜索;
+                    // 网络不可达/超时才熔断本会话
+                    if (!(ex is HttpRequestException { StatusCode: System.Net.HttpStatusCode.NotFound }))
+                    {
+                        _musicBrainzDown = true;
+                    }
                 }
             }
 
@@ -61,12 +64,22 @@ namespace MusicStrmExtract.Online
                 }
                 catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
                 {
-                    _musicBrainzDown = true;
+                    // 搜索 404(无此查询结果)不熔断;网络/超时才熔断
+                    if (!(ex is HttpRequestException { StatusCode: System.Net.HttpStatusCode.NotFound }))
+                    {
+                        _musicBrainzDown = true;
+                    }
                 }
             }
 
-            // 路径 3: iTunes 兜底
-            return await ResolveByITunesAsync(embedded, ct).ConfigureAwait(false);
+            // 路径 3: 无 iTunes 兜底 —— MusicBrainz 不可达/无结果时不产生在线命中
+            return new OnlineMetadata
+            {
+                Kind = OnlineMatchKind.None,
+                Note = _musicBrainzDown
+                    ? "MusicBrainz 本会话不可达(可能已熔断),无在线补全"
+                    : "MusicBrainz 无结果,无在线补全(用户约定不使用 iTunes)"
+            };
         }
 
         private async Task<OnlineMetadata> ResolveByTrackMbidAsync(TrackMetadata embedded, string trackMbid, CancellationToken ct)
@@ -96,6 +109,7 @@ namespace MusicStrmExtract.Online
                 Source = "MusicBrainz",
                 RecordingMbid = trackMbid
             };
+            online.Fields.MusicBrainzTrackId = trackMbid;
 
             online.Fields.Title = recordingTitle;
             ApplyArtistCredit(online, root);
@@ -143,8 +157,14 @@ namespace MusicStrmExtract.Online
             var wanted = MergePolicy.NormalizeTitle(title);
             var candidates = recordings.EnumerateArray().ToList();
             var scored = candidates
-                .Select(r => new { Item = r, Score = GetInt(r, "score"), TitleMatch = string.Equals(MergePolicy.NormalizeTitle(GetString(r, "title") ?? string.Empty), wanted, StringComparison.Ordinal) })
-                .Where(x => x.Score > 0 && x.TitleMatch)
+                .Select(r => new
+                {
+                    Item = r,
+                    Score = GetInt(r, "score"),
+                    TitleMatch = TitleSimilar(wanted, MergePolicy.NormalizeTitle(GetString(r, "title") ?? string.Empty)),
+                    ArtistMatch = ArtistMatches(artist, GetArtistCreditNames(r))
+                })
+                .Where(x => x.Score > 0 && x.TitleMatch && x.ArtistMatch)
                 .ToList();
 
             if (scored.Count == 0)
@@ -152,7 +172,7 @@ namespace MusicStrmExtract.Online
                 return new OnlineMetadata
                 {
                     Kind = OnlineMatchKind.None,
-                    Note = $"文本搜索无标题一致候选(count={candidates.Count})"
+                    Note = $"文本搜索无标题一致(且艺术家宽松匹配)候选(count={candidates.Count})"
                 };
             }
 
@@ -168,9 +188,10 @@ namespace MusicStrmExtract.Online
                     : $"文本搜索多候选(score={best.Score}, count={scored.Count}),模糊"
             };
 
-            // 即使 Ambiguous 也带出候选信息(供日志),但合并层不会采用
+            // 即使 Ambiguous 也带出 best 候选字段(在线优先策略下会被合并层采用覆盖内嵌)
             online.Fields.Title = GetString(best.Item, "title");
             online.RecordingMbid = GetString(best.Item, "id");
+            online.Fields.MusicBrainzTrackId = online.RecordingMbid;
             ApplyArtistCredit(online, best.Item);
             var release = PickRelease(best.Item, embedded);
             if (release is not null)
@@ -192,45 +213,77 @@ namespace MusicStrmExtract.Online
             return online;
         }
 
-        private async Task<OnlineMetadata> ResolveByITunesAsync(TrackMetadata embedded, CancellationToken ct)
+        /// <summary>标题宽松相似:归一后全等,或较短者(≥3 个有效字符)为较长者子串
+        /// (覆盖 "七里香" vs "七里香 (Qi-Li-Xiang)" 等带注释/附注形态;过短(1-2 字)不启用包含,防误配)。</summary>
+        private static bool TitleSimilar(string wanted, string candidate)
         {
-            var title = embedded.Title;
-            var artist = embedded.Artists.FirstOrDefault() ?? embedded.AlbumArtists.FirstOrDefault();
-            if (string.IsNullOrWhiteSpace(title))
+            if (string.Equals(wanted, candidate, StringComparison.Ordinal))
             {
-                return new OnlineMetadata { Kind = OnlineMatchKind.None, Note = "iTunes 兜底:无标题" };
+                return true;
             }
 
-            try
+            var shorter = wanted.Length <= candidate.Length ? wanted : candidate;
+            var longer = wanted.Length <= candidate.Length ? candidate : wanted;
+            return shorter.Length >= 3 && longer.Contains(shorter, StringComparison.Ordinal);
+        }
+
+        /// <summary>候选录音的 artist-credit 名称列表(优先 artist.name,缺省取 credit 项 name)。</summary>
+        private static IEnumerable<string> GetArtistCreditNames(JsonElement recording)
+        {
+            if (!recording.TryGetProperty("artist-credit", out var credit) || credit.ValueKind != JsonValueKind.Array)
             {
-                var root = await _iTunes.SearchSongAsync(artist ?? string.Empty, title, 8, ct).ConfigureAwait(false);
-                if (!root.TryGetProperty("results", out var results) || results.GetArrayLength() == 0)
+                return Enumerable.Empty<string>();
+            }
+
+            return credit.EnumerateArray()
+                .Select(item =>
                 {
-                    return new OnlineMetadata { Kind = OnlineMatchKind.None, Note = "iTunes 兜底:无结果" };
+                    if (item.TryGetProperty("artist", out var artistEl) && artistEl.TryGetProperty("name", out var nm))
+                    {
+                        return nm.GetString();
+                    }
+
+                    return GetString(item, "name");
+                })
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Select(n => n!)
+                .ToList();
+        }
+
+        /// <summary>内嵌艺术家与候选艺术家名的宽松匹配:去括号内容/空白/大小写后互为子串即可
+        /// (覆盖 "Jay Chou (周杰倫)" vs "Jay Chou"、"周杰倫" 等常见形态差异)。内嵌无艺术家则不限制。</summary>
+        private static bool ArtistMatches(string? embeddedArtist, IEnumerable<string> candidateNames)
+        {
+            if (string.IsNullOrWhiteSpace(embeddedArtist))
+            {
+                return true;
+            }
+
+            var wanted = Compact(embeddedArtist);
+            if (wanted.Length == 0)
+            {
+                return true;
+            }
+
+            foreach (var name in candidateNames)
+            {
+                var cand = Compact(name);
+                if (cand.Length > 0
+                    && (wanted.Contains(cand, StringComparison.Ordinal)
+                        || cand.Contains(wanted, StringComparison.Ordinal)))
+                {
+                    return true;
                 }
-
-                var top = results.EnumerateArray().First();
-                var collectionName = GetString(top, "collectionName");
-                if (string.IsNullOrEmpty(collectionName))
-                {
-                    return new OnlineMetadata { Kind = OnlineMatchKind.None, Note = "iTunes 兜底:结果缺专辑名" };
-                }
-
-                var online = new OnlineMetadata
-                {
-                    Kind = OnlineMatchKind.ITunesFallback,
-                    Source = "iTunes",
-                    Note = $"iTunes 兜底命中 track='{GetString(top, "trackName")}' album='{collectionName}'"
-                };
-                online.Fields.Album = collectionName;
-                online.Fields.Year = ParseYear(GetString(top, "releaseDate"));
-                online.CoverArtUrl = ITunesApi.UpgradeArtworkUrl(GetString(top, "artworkUrl100"));
-                return online;
             }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
-            {
-                return new OnlineMetadata { Kind = OnlineMatchKind.None, Note = $"iTunes 兜底失败: {ex.Message}" };
-            }
+
+            return false;
+        }
+
+        /// <summary>艺术家名归一:仅小写+去空白,**保留括号内容**(如 "Jay Chou (周杰倫)" → "jaychou(周杰倫)",
+        /// 否则会丢掉中文名而无法与 MB 的 "周杰倫" 匹配)。标题比较才需要去括号(见 MergePolicy.NormalizeTitle)。</summary>
+        private static string Compact(string value)
+        {
+            return new string(value.ToLowerInvariant().Where(c => !char.IsWhiteSpace(c)).ToArray());
         }
 
         private static void ApplyArtistCredit(OnlineMetadata online, JsonElement recording)
@@ -346,7 +399,6 @@ namespace MusicStrmExtract.Online
         public void Dispose()
         {
             _musicBrainz.Dispose();
-            _iTunes.Dispose();
         }
     }
 }

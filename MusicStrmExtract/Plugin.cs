@@ -9,7 +9,7 @@ namespace MusicStrmExtract
 {
     /// <summary>
     /// Emby 服务端插件:为音乐库中的 .strm 音频条目补全元数据。
-    /// 探测 strm 指向的 HTTP 直链目标文件的内嵌标签,并可选地获取 MusicBrainz / iTunes 在线元数据。
+    /// 探测 strm 指向的 HTTP 直链目标文件的内嵌标签,并可选地获取 MusicBrainz 在线元数据。
     /// </summary>
     public class Plugin : BasePlugin<PluginConfiguration>
     {
@@ -25,7 +25,7 @@ namespace MusicStrmExtract
 
         public override string Name => "Music Strm Extract";
 
-        public override string Description => "探测音乐库 .strm 条目的目标(HTTP 直链)内嵌标签,并补全 MusicBrainz/iTunes 在线元数据,使 strm 音乐可正常刮削组织";
+        public override string Description => "探测音乐库 .strm 条目的目标(HTTP 直链)内嵌标签,并补全 MusicBrainz 在线元数据,使 strm 音乐可正常刮削组织";
 
         public static Plugin? Instance { get; private set; }
     }

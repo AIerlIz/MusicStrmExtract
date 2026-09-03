@@ -14,11 +14,8 @@ namespace MusicStrmExtract.Metadata
         /// <summary>文本搜索唯一高置信命中。</summary>
         UniqueTextMatch,
 
-        /// <summary>文本搜索存在多个候选或置信不足,不覆盖内嵌字段。</summary>
-        AmbiguousTextMatch,
-
-        /// <summary>MusicBrainz 不可用/无结果,由 iTunes 兜底(仅补专辑侧与封面)。</summary>
-        ITunesFallback
+        /// <summary>文本搜索存在多个候选或置信不足;在线优先策略下采信 best 候选覆盖内嵌(日志标注模糊)。</summary>
+        AmbiguousTextMatch
     }
 
     /// <summary>
@@ -31,7 +28,7 @@ namespace MusicStrmExtract.Metadata
 
         public OnlineMatchKind Kind { get; set; } = OnlineMatchKind.None;
 
-        /// <summary>来源名称(MusicBrainz / iTunes / 内嵌)。</summary>
+        /// <summary>来源名称(MusicBrainz / 内嵌)。</summary>
         public string Source { get; set; } = string.Empty;
 
         public string? RecordingMbid { get; set; }

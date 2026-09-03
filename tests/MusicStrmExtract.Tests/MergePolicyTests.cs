@@ -38,7 +38,7 @@ namespace MusicStrmExtract.Tests
         }
 
         [Fact]
-        public void Merge_Ambiguous_KeepsEmbedded()
+        public void Merge_Ambiguous_OverridesEmbedded_OnlineFirst()
         {
             var ambiguous = new OnlineMetadata { Kind = OnlineMatchKind.AmbiguousTextMatch, Source = "MusicBrainz", Note = "多候选" };
             ambiguous.Fields.Title = "其它歌";
@@ -46,29 +46,29 @@ namespace MusicStrmExtract.Tests
 
             var (final, applied, kind, _) = MergePolicy.Merge(Embedded(), ambiguous);
 
-            Assert.False(applied);
+            Assert.True(applied);
             Assert.Equal(OnlineMatchKind.AmbiguousTextMatch, kind);
-            Assert.Equal("Common Jasmine Orange (七里香)", final.Album);
-            Assert.Equal("七里香", final.Title);
+            Assert.Equal("Wrong Album", final.Album); // 在线优先:best 候选覆盖内嵌
+            Assert.Equal("其它歌", final.Title);
         }
 
         [Fact]
-        public void Merge_ITunesFallback_OnlyFillsMissingAndNeverTitle()
+        public void Merge_OnlineMissingFields_BackToEmbedded_ExceptMbid()
         {
-            // 内嵌无专辑 -> iTunes 补专辑; 标题绝不能变成罗马字
-            var embedded = new TrackMetadata { Title = "我的地盤" };
-            embedded.Artists.Add("Jay Chou");
-            var online = new OnlineMetadata { Kind = OnlineMatchKind.ITunesFallback, Source = "iTunes" };
+            // 在线缺失的字段(如 MB 无年份)回填内嵌;但 MBID 不回填(防内嵌脏 ID 污染 ProviderIds)
+            var embedded = Embedded();
+            embedded.MusicBrainzTrackId = "t-embedded"; // 脏的内嵌 ID:在线命中时不得回填
+            var online = new OnlineMetadata { Kind = OnlineMatchKind.UniqueTextMatch, Source = "MusicBrainz", Note = "文本唯一高置信" };
+            online.Fields.Title = "Qi-Li-Xiang";
             online.Fields.Album = "Common Jasmine Orange";
-            online.Fields.Year = 2004;
-            online.Fields.Title = "Wo De Di Pan"; // 罗马字(模拟 iTunes)
+            // 未设置 Year / MBID
 
             var (final, _, kind, _) = MergePolicy.Merge(embedded, online);
 
-            Assert.Equal(OnlineMatchKind.ITunesFallback, kind);
-            Assert.Equal("我的地盤", final.Title);
-            Assert.Equal("Common Jasmine Orange", final.Album);
-            Assert.Equal(2004, final.Year);
+            Assert.Equal(OnlineMatchKind.UniqueTextMatch, kind);
+            Assert.Equal("Qi-Li-Xiang", final.Title);     // 在线优先覆盖标题
+            Assert.Equal(2004, final.Year);               // 在线缺失 -> 内嵌兜底
+            Assert.Null(final.MusicBrainzTrackId);        // MBID 不回填
         }
 
         [Fact]
