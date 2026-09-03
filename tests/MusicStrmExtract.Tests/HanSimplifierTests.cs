@@ -12,6 +12,9 @@ namespace MusicStrmExtract.Tests
         [InlineData("無與倫比", "无与伦比")]
         [InlineData("亂舞春秋", "乱舞春秋")]
         [InlineData("雙刀", "双刀")]
+        [InlineData("應對繁體選擇", "应对繁体选择")]
+        [InlineData("遠方的燈", "远方的灯")]
+        [InlineData("經過這週", "经过这周")]
         public void Simplify_ConvertsCommonTraditionalToSimplified(string input, string expected)
         {
             Assert.Equal(expected, HanSimplifier.Simplify(input));

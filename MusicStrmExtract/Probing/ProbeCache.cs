@@ -7,20 +7,21 @@ using System.Threading.Tasks;
 namespace MusicStrmExtract.Probing
 {
     /// <summary>
-    /// 探测结果进程内缓存:按 strm 文件路径 + 最后修改时间缓存 ProbeResult。
-    /// 标准 Provider 架构下每次库扫描/刷新都会调用本地 Provider,文件未变时直接复用缓存,避免重复远程探测。
+    /// 探测结果进程内缓存:按 strm 文件路径 + 最后修改时间 + TTL 缓存探测 Task。
+    /// 标准 Provider 架构下每次库扫描/刷新都会调用本地 Provider,文件未变且未过期时直接复用缓存,避免重复远程探测;
+    /// 缓存 Task 实现 per-key 并发去重:同一 strm 的并发首次探测共享一次远程 IO。
     /// </summary>
     internal static class ProbeCache
     {
         /// <summary>缓存 TTL:远程目标内容可能变化而不改变 strm 文件 mtime,超时后即使 mtime 相同也强制重新探测。</summary>
         private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(30);
 
-        private static readonly Dictionary<string, (DateTime MtimeUtc, DateTime CreatedUtc, ProbeResult? Result)> Cache =
-            new Dictionary<string, (DateTime, DateTime, ProbeResult?)>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, (DateTime MtimeUtc, DateTime CreatedUtc, Task<ProbeResult?> ProbeTask)> Cache =
+            new Dictionary<string, (DateTime, DateTime, Task<ProbeResult?>)>(StringComparer.OrdinalIgnoreCase);
 
         private static readonly object Gate = new object();
 
-        public static async Task<ProbeResult?> ProbeAsync(
+        public static Task<ProbeResult?> ProbeAsync(
             FfprobeRunner runner,
             string strmPath,
             string url,
@@ -43,23 +44,19 @@ namespace MusicStrmExtract.Probing
                     && entry.MtimeUtc == mtime
                     && now - entry.CreatedUtc < CacheTtl)
                 {
-                    return entry.Result;
+                    return entry.ProbeTask;
                 }
-            }
 
-            var result = await runner.ProbeAsync(url, ct).ConfigureAwait(false);
-
-            lock (Gate)
-            {
+                // miss:创建探测任务并立即启动,后续并发调用共享同一任务(仅一次远程 IO)
+                var task = runner.ProbeAsync(url, ct);
                 if (Cache.Count > 1000)
                 {
                     Cache.Clear();
                 }
 
-                Cache[strmPath] = (mtime, now, result);
+                Cache[strmPath] = (mtime, now, task);
+                return task;
             }
-
-            return result;
         }
     }
 }

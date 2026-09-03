@@ -130,6 +130,26 @@ namespace MusicStrmExtract.Providers
         private static readonly ConcurrentDictionary<string, (DateTime CreatedUtc, AlbumSearchResult Value)> AlbumCache =
             new ConcurrentDictionary<string, (DateTime, AlbumSearchResult)>(StringComparer.Ordinal);
 
+        private const int CacheMaxEntries = 500;
+
+        /// <summary>写入前清理:TTL 过期项(不到 30 分钟)删除,避免"只增不清理";极端超上限(>CacheMaxEntries)整体清空兜底。</summary>
+        private static void PruneCache<T>(ConcurrentDictionary<string, (DateTime CreatedUtc, T Value)> cache)
+        {
+            var now = DateTime.UtcNow;
+            foreach (var kv in cache)
+            {
+                if (now - kv.Value.CreatedUtc > TimeSpan.FromMinutes(30))
+                {
+                    cache.TryRemove(kv.Key, out _);
+                }
+            }
+
+            if (cache.Count > CacheMaxEntries)
+            {
+                cache.Clear();
+            }
+        }
+
         private async Task<AlbumSearchResult> GetAlbumSearchAsync(
             string key,
             string albumFolder,
@@ -147,6 +167,7 @@ namespace MusicStrmExtract.Providers
                 string.IsNullOrWhiteSpace(config.MusicBrainzBaseUrl) ? null : config.MusicBrainzBaseUrl);
             var search = new AlbumSearch(api);
             var result = await search.SearchAsync(albumFolder, artistFolder, ct).ConfigureAwait(false);
+            PruneCache(AlbumCache);
             AlbumCache[key] = (DateTime.UtcNow, result);
             _logger.Info($"[MusicStrmExtract] [LocalProvider] 专辑名搜索: '{albumFolder}' -> " + (result.Found ? $"'{result.Title}' MBID={result.ReleaseMbid}" : "无命中"));
             return result;
@@ -170,6 +191,7 @@ namespace MusicStrmExtract.Providers
                 string.IsNullOrWhiteSpace(config.MusicBrainzBaseUrl) ? null : config.MusicBrainzBaseUrl);
             var online = await resolver.ResolveAsync(md, ct).ConfigureAwait(false);
             _logger.Info($"[MusicStrmExtract] [LocalProvider] 在线解析完成: kind={online.Kind}");
+            PruneCache(OnlineCache);
             OnlineCache[key] = (DateTime.UtcNow, online);
             return online;
         }
