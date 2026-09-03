@@ -46,5 +46,9 @@ namespace MusicStrmExtract.Metadata
 
         /// <summary>命中说明(供日志/人工排查)。</summary>
         public string? Note { get; set; }
+
+        /// <summary>本次解析因 MusicBrainz 网络不可达/熔断而未完成(与"确认无结果"不同);
+        /// 客户端应据此决定是否保留内嵌 MBID(网络抖动不应丢失 ID)。</summary>
+        public bool MusicBrainzUnavailable { get; set; }
     }
 }

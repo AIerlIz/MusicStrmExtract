@@ -76,6 +76,7 @@ namespace MusicStrmExtract.Online
             return new OnlineMetadata
             {
                 Kind = OnlineMatchKind.None,
+                MusicBrainzUnavailable = _musicBrainzDown,
                 Note = _musicBrainzDown
                     ? "MusicBrainz 本会话不可达(可能已熔断),无在线补全"
                     : "MusicBrainz 无结果,无在线补全(用户约定不使用 iTunes)"

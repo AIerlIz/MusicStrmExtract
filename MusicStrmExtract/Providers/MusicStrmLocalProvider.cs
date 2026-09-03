@@ -38,6 +38,23 @@ namespace MusicStrmExtract.Providers
 
         public string Name => "Music Strm Extract (探测)";
 
+        /// <summary>艺人名这里近似比较:简繁归一+小写+去空白后相等或互为包含
+        /// (覆盖 "Jay Chou (周杰倫)" vs "周杰倫"、"周杰伦" vs "周傑倫" 等形态)。</summary>
+        private static bool SameArtist(string a, string b)
+        {
+            var na = NormalizeArtist(a);
+            var nb = NormalizeArtist(b);
+            return na.Length > 0
+                && (na.Equals(nb, StringComparison.Ordinal)
+                    || na.Contains(nb, StringComparison.Ordinal)
+                    || nb.Contains(na, StringComparison.Ordinal));
+        }
+
+        private static string NormalizeArtist(string value)
+        {
+            return new string(HanSimplifier.Simplify(value).ToLowerInvariant().Where(c => !char.IsWhiteSpace(c)).ToArray());
+        }
+
         /// <summary>按 strm 路径解析"艺人\专辑"文件夹结构(strm 直接位于专辑文件夹)。
         /// 返回 (专辑文件夹名, 艺人文件夹名);结构不符时对应项为 null。</summary>
         private static (string? AlbumFolder, string? ArtistFolder) GetFolderStructure(string strmPath)
@@ -210,13 +227,21 @@ namespace MusicStrmExtract.Providers
                 }
                 else
                 {
-                    // 在线无结果:内嵌 MBID 大概率脏(已在解析中被 404/无结果验证),不写回,避免污染 ProviderIds
-                    _logger.Info($"[MusicStrmExtract] [LocalProvider] 在线无结果: {md.Title} -> 仅保留内嵌文本字段,不写内嵌 MBID");
-                    final.MusicBrainzTrackId = null;
-                    final.MusicBrainzAlbumId = null;
-                    final.MusicBrainzArtistId = null;
-                    final.MusicBrainzAlbumArtistId = null;
-                    final.MusicBrainzReleaseGroupId = null;
+                    if (online.MusicBrainzUnavailable)
+                    {
+                        // 网络不可达/熔断:不等于"确认无结果",保留内嵌字段(含 MBID),避免网络抖动丢 ID
+                        _logger.Info($"[MusicStrmExtract] [LocalProvider] MB 不可达: {md.Title} -> 保留内嵌字段(含 MBID)");
+                    }
+                    else
+                    {
+                        // 在线确认无结果:内嵌 MBID 大概率脏(已在解析中被 404/无结果验证),不写回,避免污染 ProviderIds
+                        _logger.Info($"[MusicStrmExtract] [LocalProvider] 在线无结果: {md.Title} -> 仅保留内嵌文本字段,不写内嵌 MBID");
+                        final.MusicBrainzTrackId = null;
+                        final.MusicBrainzAlbumId = null;
+                        final.MusicBrainzArtistId = null;
+                        final.MusicBrainzAlbumArtistId = null;
+                        final.MusicBrainzReleaseGroupId = null;
+                    }
                 }
 
                 md = final;
@@ -235,18 +260,23 @@ namespace MusicStrmExtract.Providers
                     md.Album = album.Title;
                     md.MusicBrainzAlbumId = album.ReleaseMbid;
                     md.MusicBrainzReleaseGroupId = album.ReleaseGroupMbid;
-                    if (!string.IsNullOrWhiteSpace(album.ArtistName))
-                    {
-                        // 统一艺人名:Artists/AlbumArtists 都用 MB artist-credit 名,
-                        // 避免内嵌 "Jay Chou (周杰倫)" 等变体导致 MusicArtist 实体分裂
-                        md.Artists.Clear();
-                        md.Artists.Add(album.ArtistName);
-                        md.AlbumArtists.Clear();
-                        md.AlbumArtists.Add(album.ArtistName);
-                    }
 
-                    // 封面:不下载——专辑级 MBID(Album/ReleaseGroup)已写入,Mb 封面由 Emby 内置
-                    // MusicBrainz 抓取器在实体刷新时从 Cover Art Archive 刮削挂载(用户约定)
+                    // 艺人覆盖(保护合辑/多艺人):仅当内嵌/在线已有艺人缺失,
+                    // 或 MB 专辑艺人与其中某个归一一致(同人不同写法如 "Jay Chou (周杰倫)" vs "周杰倫")
+                    // 时才用 MB 艺人统一 Artists/AlbumArtists;不一致(如 Various Artists)则保留现有艺人。
+                    var mbArtist = album.ArtistName;
+                    if (!string.IsNullOrWhiteSpace(mbArtist))
+                    {
+                        var hasArtist = md.Artists.Count > 0;
+                        var artistMatches = !hasArtist || md.Artists.Any(a => SameArtist(a, mbArtist));
+                        if (artistMatches)
+                        {
+                            md.Artists.Clear();
+                            md.Artists.Add(mbArtist);
+                            md.AlbumArtists.Clear();
+                            md.AlbumArtists.Add(mbArtist);
+                        }
+                    }
                 }
                 else
                 {

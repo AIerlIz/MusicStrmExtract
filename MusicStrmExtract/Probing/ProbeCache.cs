@@ -12,8 +12,11 @@ namespace MusicStrmExtract.Probing
     /// </summary>
     internal static class ProbeCache
     {
-        private static readonly Dictionary<string, (DateTime MtimeUtc, ProbeResult? Result)> Cache =
-            new Dictionary<string, (DateTime, ProbeResult?)>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>缓存 TTL:远程目标内容可能变化而不改变 strm 文件 mtime,超时后即使 mtime 相同也强制重新探测。</summary>
+        private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(30);
+
+        private static readonly Dictionary<string, (DateTime MtimeUtc, DateTime CreatedUtc, ProbeResult? Result)> Cache =
+            new Dictionary<string, (DateTime, DateTime, ProbeResult?)>(StringComparer.OrdinalIgnoreCase);
 
         private static readonly object Gate = new object();
 
@@ -33,9 +36,12 @@ namespace MusicStrmExtract.Probing
                 mtime = DateTime.MinValue;
             }
 
+            var now = DateTime.UtcNow;
             lock (Gate)
             {
-                if (Cache.TryGetValue(strmPath, out var entry) && entry.MtimeUtc == mtime)
+                if (Cache.TryGetValue(strmPath, out var entry)
+                    && entry.MtimeUtc == mtime
+                    && now - entry.CreatedUtc < CacheTtl)
                 {
                     return entry.Result;
                 }
@@ -50,7 +56,7 @@ namespace MusicStrmExtract.Probing
                     Cache.Clear();
                 }
 
-                Cache[strmPath] = (mtime, result);
+                Cache[strmPath] = (mtime, now, result);
             }
 
             return result;
