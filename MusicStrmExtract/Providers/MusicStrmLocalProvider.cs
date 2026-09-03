@@ -1,8 +1,12 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -22,8 +26,13 @@ namespace MusicStrmExtract.Providers
 {
     /// <summary>
     /// 标准本地元数据读取器(ILocalMetadataProvider):Emby 在扫描/刷新 Audio 条目时调用。
-    /// 对 .strm 条目读取目标 URL 并用 ffprobe 远程探测内嵌标签,返回 MetadataResult 交由
-    /// Emby 刷新引擎合并与持久化(不再自行写库),随后引擎原生完成专辑/艺术家组织。
+    /// 双路径:
+    ///   1) 主路径·专辑轨道定位——文件名只解析数字轨号,扫描专辑文件夹得到本地轨号集合;
+    ///      按艺人 + 专辑文件夹名查询 MB release,用轨号覆盖选择 media,再按轨号直接取 tracklist
+    ///      数据(recording MBID/标题/艺人),整张专辑一次定位并缓存;不做远程探测、不做文件名文本匹配;
+    ///   2) 降级路径——结构不符/无轨号/专辑未定位/轨号不在所选 tracklist 时,回到 ffprobe 远程探测内嵌标签
+    ///      + 逐曲 MusicBrainz 补全(原行为,保底内嵌字段)。
+    /// 两条路径的结果都交由 Emby 刷新引擎持久化与专辑/艺术家组织(不自写库)。
     /// </summary>
     public sealed class MusicStrmLocalProvider : ILocalMetadataProvider<Audio>
     {
@@ -38,22 +47,10 @@ namespace MusicStrmExtract.Providers
 
         public string Name => "Music Strm Extract (探测)";
 
-        /// <summary>艺人名这里近似比较:简繁归一+小写+去空白后相等或互为包含
-        /// (覆盖 "Jay Chou (周杰倫)" vs "周杰倫"、"周杰伦" vs "周傑倫" 等形态)。</summary>
-        private static bool SameArtist(string a, string b)
-        {
-            var na = NormalizeArtist(a);
-            var nb = NormalizeArtist(b);
-            return na.Length > 0
-                && (na.Equals(nb, StringComparison.Ordinal)
-                    || na.Contains(nb, StringComparison.Ordinal)
-                    || nb.Contains(na, StringComparison.Ordinal));
-        }
-
-        private static string NormalizeArtist(string value)
-        {
-            return new string(HanSimplifier.Simplify(value).ToLowerInvariant().Where(c => !char.IsWhiteSpace(c)).ToArray());
-        }
+        /// <summary>strm 文件名数字轨号解析:"01 - 我的地盤.flac.strm" → 1;无数字前缀则 Number=-1。</summary>
+        private static readonly Regex StrmNumberRegex = new Regex(
+            @"^(\d{1,3})\s*[-_]\s*",
+            RegexOptions.Compiled);
 
         /// <summary>按 strm 路径解析"艺人\专辑"文件夹结构(strm 直接位于专辑文件夹)。
         /// 返回 (专辑文件夹名, 艺人文件夹名);结构不符时对应项为 null。</summary>
@@ -122,17 +119,18 @@ namespace MusicStrmExtract.Providers
             }
         }
 
-        /// <summary>在线补全结果缓存(键=标题|艺术家|专辑|MBID;TTL 30 分钟),避免重复刷新反复请求 MusicBrainz。</summary>
+        /// <summary>逐曲在线补全结果缓存(键=标题|艺术家|专辑|MBID;TTL 30 分钟;仅降级路径使用)。</summary>
         private static readonly ConcurrentDictionary<string, (DateTime CreatedUtc, OnlineMetadata Value)> OnlineCache =
             new ConcurrentDictionary<string, (DateTime, OnlineMetadata)>(StringComparer.Ordinal);
 
-        /// <summary>专辑名搜索缓存(键=专辑文件夹|艺人文件夹;TTL 30 分钟)。</summary>
+        /// <summary>专辑定位结果缓存(键=专辑文件夹|艺人文件夹;TTL 30 分钟)。
+        /// 含整张专辑的轨道映射——同专辑后续 strm 条目零请求直接命中。</summary>
         private static readonly ConcurrentDictionary<string, (DateTime CreatedUtc, AlbumSearchResult Value)> AlbumCache =
             new ConcurrentDictionary<string, (DateTime, AlbumSearchResult)>(StringComparer.Ordinal);
 
         private const int CacheMaxEntries = 500;
 
-        /// <summary>写入前清理:TTL 过期项(不到 30 分钟)删除,避免"只增不清理";极端超上限(>CacheMaxEntries)整体清空兜底。</summary>
+        /// <summary>写入前清理:TTL 过期项删除,避免"只增不清理";极端超上限整体清空兜底。</summary>
         private static void PruneCache<T>(ConcurrentDictionary<string, (DateTime CreatedUtc, T Value)> cache)
         {
             var now = DateTime.UtcNow;
@@ -150,52 +148,6 @@ namespace MusicStrmExtract.Providers
             }
         }
 
-        private async Task<AlbumSearchResult> GetAlbumSearchAsync(
-            string key,
-            string albumFolder,
-            string? artistFolder,
-            PluginConfiguration config,
-            CancellationToken ct)
-        {
-            if (AlbumCache.TryGetValue(key, out var entry)
-                && DateTime.UtcNow - entry.CreatedUtc < TimeSpan.FromMinutes(30))
-            {
-                return entry.Value;
-            }
-
-            using var api = new MusicBrainzApi(
-                string.IsNullOrWhiteSpace(config.MusicBrainzBaseUrl) ? null : config.MusicBrainzBaseUrl);
-            var search = new AlbumSearch(api);
-            var result = await search.SearchAsync(albumFolder, artistFolder, ct).ConfigureAwait(false);
-            PruneCache(AlbumCache);
-            AlbumCache[key] = (DateTime.UtcNow, result);
-            _logger.Info($"[MusicStrmExtract] [LocalProvider] 专辑名搜索: '{albumFolder}' -> " + (result.Found ? $"'{result.Title}' MBID={result.ReleaseMbid}" : "无命中"));
-            return result;
-        }
-
-        private async Task<OnlineMetadata> GetOnlineAsync(
-            TrackMetadata md,
-            PluginConfiguration config,
-            CancellationToken ct)
-        {
-            var key = $"{md.Title}|{string.Join("/", md.Artists)}|{md.Album}|{md.MusicBrainzTrackId}";
-            if (OnlineCache.TryGetValue(key, out var entry)
-                && DateTime.UtcNow - entry.CreatedUtc < TimeSpan.FromMinutes(30))
-            {
-                _logger.Info($"[MusicStrmExtract] [LocalProvider] 在线缓存命中: {md.Title}");
-                return entry.Value;
-            }
-
-            _logger.Info($"[MusicStrmExtract] [LocalProvider] 在线解析开始(无缓存): {md.Title}");
-            using var resolver = new OnlineResolver(
-                string.IsNullOrWhiteSpace(config.MusicBrainzBaseUrl) ? null : config.MusicBrainzBaseUrl);
-            var online = await resolver.ResolveAsync(md, ct).ConfigureAwait(false);
-            _logger.Info($"[MusicStrmExtract] [LocalProvider] 在线解析完成: kind={online.Kind}");
-            PruneCache(OnlineCache);
-            OnlineCache[key] = (DateTime.UtcNow, online);
-            return online;
-        }
-
         public async Task<MetadataResult<Audio>> GetMetadata(
             ItemInfo info,
             LibraryOptions libraryOptions,
@@ -209,13 +161,207 @@ namespace MusicStrmExtract.Providers
                 return result;
             }
 
+            var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+
+            // ===== 主路径:专辑轨道定位(艺人/专辑文件夹 → MB release tracklist;零远程探测)=====
+            if (config.EnableOnlineMetadata)
+            {
+                var (albumFolder, artistFolder) = GetFolderStructure(info.Path);
+                if (!string.IsNullOrWhiteSpace(albumFolder)
+                    && await TryResolveByAlbumTrackAsync(info, albumFolder, artistFolder, config, result, cancellationToken).ConfigureAwait(false))
+                {
+                    return result;
+                }
+            }
+
+            // ===== 降级路径:ffprobe 远程探测内嵌标签 + 逐曲 MusicBrainz 补全 =====
+            return await ProbeAndResolveAsync(info, config, cancellationToken).ConfigureAwait(false);
+        }
+
+        // ==================== 主路径:专辑轨道定位 ====================
+
+        private async Task<bool> TryResolveByAlbumTrackAsync(
+            ItemInfo info,
+            string albumFolder,
+            string? artistFolder,
+            PluginConfiguration config,
+            MetadataResult<Audio> result,
+            CancellationToken ct)
+        {
+            var albumDir = Path.GetDirectoryName(info.Path);
+            if (string.IsNullOrWhiteSpace(albumDir))
+            {
+                return false;
+            }
+
+            var self = ParseStrmFileName(info.Path);
+            if (self is null || self.Number <= 0)
+            {
+                return false; // 本文件无轨号,无法按轨取数
+            }
+
+            var localTracks = ScanAlbumTracks(albumDir);
+            if (localTracks.Count == 0)
+            {
+                return false;
+            }
+
+            AlbumSearchResult album;
+            try
+            {
+                album = await GetAlbumTrackMapAsync(
+                    $"{albumFolder}|{artistFolder}", albumFolder, artistFolder, localTracks, config, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+            {
+                // MB 不可达/超时:不写缓存、不产生结果(条目保持现状,与降级路径的熔断语义一致)
+                _logger.Warn($"[MusicStrmExtract] [LocalProvider] 专辑定位 MB 不可达: '{albumFolder}' -> {ex.Message}");
+                return false;
+            }
+
+            if (!album.Found)
+            {
+                return false;
+            }
+
+            var track = album.Tracks.FirstOrDefault(t => t.Number == self.Number);
+            if (track is null)
+            {
+                return false;
+            }
+
+            // 命中:数据全部来自 MB 专辑 tracklist(recording MBID 真实无脏)
+            var albumArtists = !string.IsNullOrWhiteSpace(album.ArtistName)
+                ? new[] { album.ArtistName! }
+                : Array.Empty<string>();
+            var trackArtists = track.Artists.Count > 0 ? track.Artists.ToArray() : albumArtists;
+
+            var item = new Audio
+            {
+                Name = (track.Title ?? Path.GetFileNameWithoutExtension(info.Path)).Trim(),
+                Album = album.Title,
+                ProductionYear = album.Year,
+                IndexNumber = track.Number,
+                Artists = trackArtists,
+                AlbumArtists = albumArtists
+            };
+
+            SetProviderId(item, "MusicBrainzTrack", track.RecordingMbid);
+            SetProviderId(item, "MusicBrainzAlbum", album.ReleaseMbid);
+            SetProviderId(item, "MusicBrainzArtist", track.ArtistMbid ?? album.AlbumArtistMbid);
+            SetProviderId(item, "MusicBrainzAlbumArtist", album.AlbumArtistMbid);
+            SetProviderId(item, "MusicBrainzReleaseGroup", album.ReleaseGroupMbid);
+
+            result.Item = item;
+            result.HasMetadata = true;
+            if (!string.IsNullOrWhiteSpace(album.Title))
+            {
+                SyncAlbumField(info, album.Title, albumArtists);
+            }
+
+            _logger.Info($"[MusicStrmExtract] [LocalProvider] 专辑轨道定位: '{albumFolder}' 轨 {track.Number} '{track.Title}' recordingMBID={track.RecordingMbid}");
+            return true;
+        }
+
+        private async Task<AlbumSearchResult> GetAlbumTrackMapAsync(
+            string key,
+            string albumFolder,
+            string? artistFolder,
+            List<LocalTrack> localTracks,
+            PluginConfiguration config,
+            CancellationToken ct)
+        {
+            if (AlbumCache.TryGetValue(key, out var entry)
+                && DateTime.UtcNow - entry.CreatedUtc < TimeSpan.FromMinutes(30))
+            {
+                return entry.Value;
+            }
+
+            using var api = new MusicBrainzApi(
+                string.IsNullOrWhiteSpace(config.MusicBrainzBaseUrl) ? null : config.MusicBrainzBaseUrl);
+            var search = new AlbumSearch(api);
+            var result = await search.SearchForTrackMapAsync(albumFolder, artistFolder, localTracks, ct).ConfigureAwait(false);
+            PruneCache(AlbumCache);
+            AlbumCache[key] = (DateTime.UtcNow, result);
+            _logger.Info($"[MusicStrmExtract] [LocalProvider] 专辑定位: '{albumFolder}' -> " +
+                (result.Found
+                    ? $"'{result.Title}' releaseMBID={result.ReleaseMbid} 轨数={result.Tracks.Count}"
+                    : "无命中/轨号覆盖未通过"));
+            return result;
+        }
+
+        /// <summary>解析 strm 文件名数字前缀 → 轨号;无数字前缀时 Number=-1。</summary>
+        private static LocalTrack? ParseStrmFileName(string filePath)
+        {
+            var name = Path.GetFileName(filePath);
+            if (name.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
+            {
+                name = name.Substring(0, name.Length - ".strm".Length);
+            }
+
+            var m = StrmNumberRegex.Match(name);
+            if (!m.Success)
+            {
+                return null;
+            }
+
+            var track = new LocalTrack();
+            if (m.Groups[1].Success
+                && int.TryParse(m.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var number))
+            {
+                track.Number = number;
+            }
+
+            return track;
+        }
+
+        /// <summary>扫描专辑文件夹内全部 .strm,构建本地轨号集合(按轨号升序、去重,不读取文件名标题)。</summary>
+        private static List<LocalTrack> ScanAlbumTracks(string albumDir)
+        {
+            var tracks = new List<LocalTrack>();
+            var seen = new HashSet<int>();
+            try
+            {
+                foreach (var f in Directory.EnumerateFiles(albumDir))
+                {
+                    if (!f.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var t = ParseStrmFileName(f);
+                    if (t is null || t.Number <= 0 || !seen.Add(t.Number))
+                    {
+                        continue;
+                    }
+
+                    tracks.Add(t);
+                }
+            }
+            catch (Exception)
+            {
+                return tracks;
+            }
+
+            tracks.Sort((a, b) => a.Number.CompareTo(b.Number));
+            return tracks;
+        }
+
+        // ==================== 降级路径:探测内嵌 + 逐曲在线 ====================
+
+        private async Task<MetadataResult<Audio>> ProbeAndResolveAsync(
+            ItemInfo info,
+            PluginConfiguration config,
+            CancellationToken cancellationToken)
+        {
+            var result = new MetadataResult<Audio>();
+
             var url = ReadStrmUrl(info.Path);
             if (string.IsNullOrEmpty(url))
             {
                 return result;
             }
 
-            var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
             var ffprobePath = FfprobeRunner.Locate(config.FfprobePath);
             if (string.IsNullOrEmpty(ffprobePath))
             {
@@ -237,8 +383,7 @@ namespace MusicStrmExtract.Providers
                 return result;
             }
 
-            // 在线补全合并进本地读取器流程(实测 Emby 4.9 刷新 Audio 条目不调用 IRemoteMetadataProvider 的
-            // GetMetadata 阶段,在线抓取主要由专辑/艺术家级联;此处探测后直接补全,结果仍交由引擎持久化)
+            // 逐曲在线补全(轨道定位未覆盖时的原行为;MB 不可达/无结果时保留内嵌字段)
             if (config.EnableOnlineMetadata)
             {
                 var online = await GetOnlineAsync(md, config, cancellationToken).ConfigureAwait(false);
@@ -269,44 +414,9 @@ namespace MusicStrmExtract.Providers
                 md = final;
             }
 
-            // 专辑/艺人组织:按专辑名搜索 MB(用户约定:专辑实体名 = MB 官方专辑名)。
-            // 搜索命中且可信 -> md.Album = MB 官方专辑名并写专辑级 MBID(供内置抓取器补详情/封面);
-            // 未命中 -> 回退专辑文件夹名(与文件系统一致,避免悬浮专辑)。
-            var (albumFolder, artistFolder) = GetFolderStructure(info.Path);
-            if (config.EnableOnlineMetadata && !string.IsNullOrWhiteSpace(albumFolder))
-            {
-                var albumKey = $"{albumFolder}|{artistFolder}";
-                var album = await GetAlbumSearchAsync(albumKey, albumFolder, artistFolder, config, cancellationToken).ConfigureAwait(false);
-                if (album.Found && !string.IsNullOrWhiteSpace(album.Title))
-                {
-                    md.Album = album.Title;
-                    md.MusicBrainzAlbumId = album.ReleaseMbid;
-                    md.MusicBrainzReleaseGroupId = album.ReleaseGroupMbid;
-
-                    // 艺人覆盖(保护合辑/多艺人):仅当内嵌/在线已有艺人缺失,
-                    // 或 MB 专辑艺人与其中某个归一一致(同人不同写法如 "Jay Chou (周杰倫)" vs "周杰倫")
-                    // 时才用 MB 艺人统一 Artists/AlbumArtists;不一致(如 Various Artists)则保留现有艺人。
-                    var mbArtist = album.ArtistName;
-                    if (!string.IsNullOrWhiteSpace(mbArtist))
-                    {
-                        var hasArtist = md.Artists.Count > 0;
-                        var artistMatches = !hasArtist || md.Artists.Any(a => SameArtist(a, mbArtist));
-                        if (artistMatches)
-                        {
-                            md.Artists.Clear();
-                            md.Artists.Add(mbArtist);
-                            md.AlbumArtists.Clear();
-                            md.AlbumArtists.Add(mbArtist);
-                        }
-                    }
-                }
-                else
-                {
-                    _logger.Warn($"[MusicStrmExtract] [LocalProvider] 专辑名搜索无命中: '{albumFolder}' -> 使用文件夹名作为专辑名");
-                    md.Album = albumFolder;
-                }
-            }
-            else if (!string.IsNullOrWhiteSpace(albumFolder))
+            // 专辑名兜底:降级路径不做专辑搜索(避免与主路径双请求),内嵌无专辑名时用文件夹名
+            var (albumFolder, _) = GetFolderStructure(info.Path);
+            if (string.IsNullOrWhiteSpace(md.Album) && !string.IsNullOrWhiteSpace(albumFolder))
             {
                 md.Album = albumFolder;
             }
@@ -316,8 +426,6 @@ namespace MusicStrmExtract.Providers
                 return result;
             }
 
-            // 引擎不采用 provider 返回的 Audio.Album(实测)且 AlbumId 只读;
-            // 对真实条目直写最终(文件夹为准)的 Album/AlbumArtists,便于库扫描归组/后续清理实体
             if (config.EnableOnlineMetadata && !string.IsNullOrWhiteSpace(md.Album))
             {
                 SyncAlbumField(info, md.Album, md.AlbumArtists);
@@ -335,6 +443,30 @@ namespace MusicStrmExtract.Providers
             result.HasMetadata = true;
             _logger.Info($"[MusicStrmExtract] [LocalProvider] 探测完成: Id={item.Id} Name='{item.Name}' Album='{item.Album}'");
             return result;
+        }
+
+        /// <summary>逐曲在线解析(MBID 精确 → 文本搜索),30 分钟缓存。仅降级路径使用。</summary>
+        private async Task<OnlineMetadata> GetOnlineAsync(
+            TrackMetadata md,
+            PluginConfiguration config,
+            CancellationToken ct)
+        {
+            var key = $"{md.Title}|{string.Join("/", md.Artists)}|{md.Album}|{md.MusicBrainzTrackId}";
+            if (OnlineCache.TryGetValue(key, out var entry)
+                && DateTime.UtcNow - entry.CreatedUtc < TimeSpan.FromMinutes(30))
+            {
+                _logger.Info($"[MusicStrmExtract] [LocalProvider] 在线缓存命中: {md.Title}");
+                return entry.Value;
+            }
+
+            _logger.Info($"[MusicStrmExtract] [LocalProvider] 在线解析开始(无缓存): {md.Title}");
+            using var resolver = new OnlineResolver(
+                string.IsNullOrWhiteSpace(config.MusicBrainzBaseUrl) ? null : config.MusicBrainzBaseUrl);
+            var online = await resolver.ResolveAsync(md, ct).ConfigureAwait(false);
+            _logger.Info($"[MusicStrmExtract] [LocalProvider] 在线解析完成: kind={online.Kind}");
+            PruneCache(OnlineCache);
+            OnlineCache[key] = (DateTime.UtcNow, online);
+            return online;
         }
 
         private static void ApplyFields(Audio item, TrackMetadata md)

@@ -8,25 +8,25 @@ Emby 对音乐库中的 `.strm` 文件**不执行媒体探测** → 无法读取
 
 ## 插件做什么
 
-以**标准 Emby 元数据 Provider 架构**运行(本地读取器 + 在线下载器,写回/专辑组织/封面挂载全部交给 Emby 刷新引擎,插件自身不写库):
+以**标准 Emby 元数据 Provider 架构**运行(本地读取器 + 在线下载器,写回/专辑组织/封面挂载全部交给 Emby 刷新引擎,插件自身不写库),两条路径:
 
-1. **本地读取器 `ILocalMetadataProvider<Audio>`(探测)**:Emby 在扫描/刷新每个 Audio 条目时调用——读取 strm 内容(URL,原样保留,含签名参数),用 ffprobe 远程探测(`-show_format -show_streams`),提取内嵌标签(flac Vorbis / mp3 ID3 / m4a MP4,大小写不敏感、别名兼容)作为本地元数据;探测结果按 strm 文件修改时间缓存,重复扫描不重复探测。
-2. **在线下载器 `IRemoteMetadataProvider<Audio, SongInfo>`(MusicBrainz)**:引擎在本地元数据之后调用——内嵌带可信 MBID 则按 ID 精确取回;无 MBID 或 MBID 与标题不符则按标题在 MusicBrainz 搜索(候选层做标题宽松匹配 + 艺术家宽松匹配);MusicBrainz 不可用/无结果时**不做在线补全**,保留内嵌字段(需自备 MB 连通,如镜像/代理)。
-3. **合并(在线优先)**:内嵌标签可能由用户自填/有误,故**任何 MusicBrainz 在线命中**——MBID 精确、文本唯一高置信、模糊多候选的 best 候选——都用在线字段覆盖内嵌重叠字段;仅在线缺失的字段回填内嵌(MusicBrainz ID 除外,宁缺毋滥防脏 ID);在线无果 → 内嵌兜底。
-4. **持久化/组织/封面**:引擎统一保存(含 `Album` 等受管字段的关联)、生成 MusicAlbum / MusicArtist 聚合;封面经 `GetImages` 由引擎下载并挂到条目。
+1. **主路径·专辑轨道定位(零探测、整专辑一次)**:strm 文件名只解析数字轨号(`01 - 我的地盤.flac.strm` → 1)并扫描专辑文件夹得到本地轨号集合,不读取文件名标题;按"艺人文件夹 + 专辑文件夹名"作为查询词锁定 MusicBrainz release,用本地轨号覆盖**校验并选择 media(碟)**,随后单曲**按轨号直接取该专辑 tracklist 的 recording MBID/标题/艺人**——整条主路径不做本地文本比较、不做字形转换,不依赖内嵌标签,recording MBID 来自 MB 专辑、天然无脏 ID。
+2. **降级路径·探测(原行为保底)**:结构不符(无 艺人/专辑 两层)、strm 文件名无轨号、专辑定位失败或轨号不在所选 tracklist 时——读取 strm 内容(URL,原样保留,含签名参数),用 ffprobe 远程探测(`-show_format -show_streams`)提取内嵌标签,再做逐曲 MusicBrainz 补全(标题搜索,候选宽松匹配);探测结果按 strm 文件修改时间缓存,重复扫描不重复探测。MB 不可达/无结果时保留内嵌字段(需自备 MB 连通,如镜像/代理)。
 
 ## 触发方式(无需计划任务、无需 PostScan)
 
-- **入库/刷新即处理**:插件注册的 `ILocalMetadataProvider` + `IRemoteMetadataProvider` 由 Emby 刷新引擎在**新 .strm 入库扫描、媒体库扫描、任何"刷新元数据"操作**时自动调用;本地探测 → 在线补全 → 引擎持久化与专辑归组,全程标准流程,无自写库、无双写循环。
+- **入库/刷新即处理**:插件注册的 `ILocalMetadataProvider` 由 Emby 刷新引擎在**新 .strm 入库扫描、媒体库扫描、任何"刷新元数据"操作**时自动调用;专辑轨道定位(或降级探测) → 引擎持久化与专辑归组,全程标准流程,无自写库、无双写循环。整专辑定位结果 30 分钟缓存,同专辑重复刷新零额外 MusicBrainz 请求。
 - 刷新引擎自带 remote 结果缓存,重复刷新不会重复请求 MusicBrainz。
 - 无任何定时/计划任务。
 
-## 实测结果(Emby 4.9.5.0,MB-only 版)
+## 实测结果(Emby 4.9.5.0;样本库:周杰伦《七里香》《叶惠美》,`艺人/专辑/NN - 标题.strm` 结构)
 
-- 21 条 strm(周杰伦《七里香》《叶惠美》):本地探测 21/21;MusicBrainz 在线命中并写回 **17~19/21 条**(其余在官方源间歇 503 时保留内嵌),失败=0;写回的 `MusicBrainzTrack/Album/Artist` 为**真实 MBID**(不再回填内嵌脏值 `f13d05fa…`/`ac2b0f62…`),艺术家 MBID `a223958d`(周杰倫)正确。
-- 中文曲目命中正确:`我的地盤`、`七里香`、`將軍`、`擱淺` 等(标题保持内嵌繁体,字段来自 MusicBrainz)。
+- 21 条 strm:文件系统结构规整率 **21/21**;文件名轨号可解析率 **21/21**(两专辑轨号 `1..N` 无缺无重)。
+- **主路径专辑定位 21/21**:简体艺人/专辑文件夹名(`周杰伦`/`叶惠美`)→ MB release 查询直接命中官方繁体 release(artist `a223958d` 周杰倫);本地轨号覆盖校验通过后按轨号取 recording,每轨 MBID 真实可取;**全程零远程 ffprobe 探测、零逐曲文本搜索**。
+- 多碟验证:两专辑的 MB 附加碟(MV,轨号未覆盖本地轨号集合)被正确排除,只取主 CD。
+- 降级路径(原探测/逐曲)保留可用:结构或轨号不满足的条目自动回落;MB 不可达/无结果时保留内嵌字段。
 - **循环根治**:旧版 Provider+PostScan 双写不一致导致的循环已随重构移除;写回与组织由 Emby 引擎单点完成。
-- 专辑组织:写入由引擎统一持久化后,Emby 原生生成/刷新 `MusicAlbum` / `MusicArtist`;专辑 MBID 由 Emby 内置 MusicBrainz 抓取器在刷新时写入可达专辑。
+- 专辑组织:写入由引擎统一持久化后,Emby 原生生成/刷新 `MusicAlbum` / `MusicArtist`;专辑 MBID 由插件直写(主路径)或 Emby 内置 MusicBrainz 抓取器(降级路径)在刷新时写入可达专辑。
 
 ## 构建
 
@@ -37,7 +37,7 @@ dotnet build MusicStrmExtract/MusicStrmExtract.csproj -c Release
 dotnet test tests/MusicStrmExtract.Tests/MusicStrmExtract.Tests.csproj   # 本机无 .NET 8 运行时需: DOTNET_ROLL_FORWARD=LatestMajor
 ```
 
-产物:`MusicStrmExtract/bin/Release/MusicStrmExtract.dll`
+产物:`MusicStrmExtract/bin/Release/` 下的 `MusicStrmExtract.dll`(无外部依赖)
 
 ## 部署
 
@@ -77,7 +77,7 @@ dotnet test tests/MusicStrmExtract.Tests/MusicStrmExtract.Tests.csproj   # 本�
 MusicStrmExtract/
   Metadata/   TrackMetadata / TagParser(内嵌标签解析)/ MergePolicy(在线优先合并)/ OnlineMetadata
   Probing/    FfprobeRunner(定位+执行)/ ProbeResult(ffprobe JSON 解析)/ ProbeCache(mtime 缓存,免重复探测)
-  Online/     MusicBrainzApi / OnlineResolver(MBID→文本编排,含限速与熔断)
-  Providers/  MusicStrmLocalProvider(ILocalMetadataProvider,探测内嵌) / MusicStrmRemoteProvider(IRemoteMetadataProvider,MB 在线+封面)
-tests/        xunit 单测(TagParser / ProbeResult / MergePolicy)
+  Online/     MusicBrainzApi(限速/缓存/release+artist 查询与 tracklist 取回) / AlbumSearch(专辑锁定:艺人+专辑查询,轨号覆盖选碟) / OnlineResolver(降级路径逐曲编排,含熔断)
+  Providers/  MusicStrmLocalProvider(ILocalMetadataProvider:主路径轨道定位 + 降级探测) / MusicStrmRemoteProvider(IRemoteMetadataProvider,MB 在线+封面)
+tests/        xunit 单测(TagParser / ProbeResult / MergePolicy / AlbumSearch 轨道解析与选碟)
 ```

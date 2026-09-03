@@ -53,11 +53,23 @@ namespace MusicStrmExtract.Online
             return await GetJsonRootAsync(url, ct).ConfigureAwait(false);
         }
 
-        /// <summary>按专辑名搜索 release, limit 条(供"根据专辑名称搜索"的专辑实体刮削使用)。</summary>
-        public async Task<JsonElement> SearchReleasesAsync(string album, int limit, CancellationToken ct)
+        /// <summary>GET release by MBID, inc=recordings+artist-credits+release-groups(取轨道映射用)。失败抛异常。</summary>
+        public async Task<JsonElement> GetReleaseAsync(string releaseMbid, CancellationToken ct)
+        {
+            var url = $"{_baseUrl}/ws/2/release/{Uri.EscapeDataString(releaseMbid)}?inc=recordings+artist-credits+release-groups&fmt=json";
+            return await GetJsonRootAsync(url, ct).ConfigureAwait(false);
+        }
+
+        /// <summary>按专辑名 + 艺人名搜索 release, limit 条(供"艺人 + 专辑文件夹名锁定 release"使用)。
+        /// 本地目录名原样透传,不做字形转换。</summary>
+        public async Task<JsonElement> SearchReleasesAsync(string album, string? artist, int limit, CancellationToken ct)
         {
             var sb = new System.Text.StringBuilder("release:");
             sb.Append('"').Append(album.Replace("\"", string.Empty)).Append('"');
+            if (!string.IsNullOrWhiteSpace(artist))
+            {
+                sb.Append(" AND artist:\"").Append(artist.Trim().Replace("\"", string.Empty)).Append('"');
+            }
 
             var query = Uri.EscapeDataString(sb.ToString());
             var url = $"{_baseUrl}/ws/2/release?query={query}&fmt=json&limit={limit}";
