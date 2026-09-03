@@ -97,7 +97,7 @@ namespace MusicStrmExtract.Online
         /// <summary>
         /// 专辑轨道映射搜索:搜索 + 取 tracklist + 本地指纹校验选碟。
         /// 未找到 release、或所选 release 的 media 均未覆盖本地轨号时返回 Found=false
-        /// (调用方降级到探测路径)。
+        /// (调用方按未命中处理)。
         /// </summary>
         public async Task<AlbumSearchResult> SearchForTrackMapAsync(
             string albumFolderName,

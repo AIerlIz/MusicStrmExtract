@@ -1,25 +1,22 @@
-using MediaBrowser.Model.Plugins;
+using System.ComponentModel;
+
+using Emby.Web.GenericEdit;
 
 namespace MusicStrmExtract
 {
     /// <summary>
-    /// 插件配置(配置页保存到 config/plugins/MusicStrmExtract.xml)。
+    /// 插件配置。Emby 根据该类型自动生成插件设置页。
     /// </summary>
-    public class PluginConfiguration : BasePluginConfiguration
+    public class PluginConfiguration : EditableOptionsBase
     {
-        /// <summary>ffprobe 可执行文件完整路径;留空则自动在 Emby system 目录及 PATH 中查找。</summary>
-        public string FfprobePath { get; set; } = string.Empty;
+        public override string EditorTitle => "Music Strm Extract 设置";
 
-        /// <summary>探测远程目标时附加的 HTTP 头,每行一个 "Header: value"(用于防盗链 UA/Referer 等)。</summary>
-        public string ExtraHeaders { get; set; } = string.Empty;
-
-        /// <summary>单次远程探测超时(秒)。</summary>
-        public int ProbeTimeoutSeconds { get; set; } = 30;
-
-        /// <summary>是否启用在线元数据补全(MusicBrainz)。</summary>
-        public bool EnableOnlineMetadata { get; set; } = true;
+        public override string EditorDescription =>
+            "按歌手与专辑目录结构从 MusicBrainz 锁定专辑，并按轨号补全 .strm 元数据。";
 
         /// <summary>MusicBrainz 端点;留空=官方 https://musicbrainz.org(华语网络下官方源间歇 503,建议填镜像/socks 前置,如 https://musicbrainz.emby.tv)。</summary>
+        [DisplayName("MusicBrainz 服务地址")]
+        [Description("留空使用官方 https://musicbrainz.org；官方不稳定时可填写镜像，例如 https://musicbrainz.emby.tv。")]
         public string MusicBrainzBaseUrl { get; set; } = string.Empty;
     }
 }

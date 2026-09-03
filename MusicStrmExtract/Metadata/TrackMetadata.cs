@@ -5,7 +5,7 @@ using System.Linq;
 namespace MusicStrmExtract.Metadata
 {
     /// <summary>
-    /// 归一化的音轨元数据(来自内嵌标签或在线来源,合并前统一形态)。
+    /// 归一化的音轨元数据(来自当前条目信息或在线来源,合并前统一形态)。
     /// </summary>
     public sealed class TrackMetadata
     {

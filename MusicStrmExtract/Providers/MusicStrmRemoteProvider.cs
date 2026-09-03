@@ -64,10 +64,6 @@ namespace MusicStrmExtract.Providers
         {
             var result = new MetadataResult<Audio>();
             var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-            if (!config.EnableOnlineMetadata)
-            {
-                return result;
-            }
 
             var embedded = FromLookupInfo(info);
             if (string.IsNullOrWhiteSpace(embedded.Title))
@@ -84,7 +80,7 @@ namespace MusicStrmExtract.Providers
 
             if (online.Kind == OnlineMatchKind.None || final.IsEmpty)
             {
-                // 在线无命中:引擎将保留本地(探测/内嵌)结果
+                // 在线无命中:引擎将保留现有/本地结果
                 return result;
             }
 
