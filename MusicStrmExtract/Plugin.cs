@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Reflection;
 using System.Xml.Linq;
 
 using MediaBrowser.Common;
@@ -36,6 +37,21 @@ namespace MusicStrmExtract
         public override string Name => "Music Strm Extract";
 
         public override string Description => "按歌手/专辑目录与轨号从 MusicBrainz 补全 .strm 音乐元数据,使 strm 音乐可正常刮削组织";
+
+        public override byte[]? Icon => GetIconBytes();
+
+        private static byte[]? GetIconBytes()
+        {
+            var assembly = typeof(Plugin).Assembly;
+            using var stream = assembly.GetManifestResourceStream("MusicStrmExtract.icon.png");
+            if (stream == null)
+            {
+                return null;
+            }
+            using var ms = new MemoryStream();
+            stream.CopyTo(ms);
+            return ms.ToArray();
+        }
 
         /// <summary>升级到 Simple UI 后首次启动时,把旧版 XML 配置迁移到新 JSON 配置,避免已有设置丢失。</summary>
         private void MigrateLegacyXmlConfiguration()
