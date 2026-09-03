@@ -1,12 +1,100 @@
+using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.IO;
 using System.Text;
 
 namespace MusicStrmExtract.Metadata
 {
-    /// <summary>常用繁体→简体映射(覆盖音乐/艺人场景常见字,用于 MB 匹配归一)。</summary>
+    /// <summary>
+    /// 简繁归一:优先 OpenCC 词级转换(全覆盖、词义级),失败/词典缺失时回退内置常用字表。
+    /// OpenCC.NET 的 Dictionary/JiebaResource 由 NuGet 输出到程序目录,首次使用惰性初始化。
+    /// </summary>
     public static class HanSimplifier
     {
+        private static readonly object InitGate = new object();
+        private static bool _initialized;
+        private static bool _openccAvailable;
+
+        /// <summary>OpenCC 词级转换是否可用(词典已部署且初始化成功)。</summary>
+        public static bool IsOpenCcAvailable
+        {
+            get
+            {
+                EnsureInitialized();
+                return _openccAvailable;
+            }
+        }
+
+        /// <summary>把字符串中的繁体/异体字转换为简体;未映射字符原样保留。</summary>
+        public static string Simplify(string? value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+
+            EnsureInitialized();
+            if (_openccAvailable)
+            {
+                try
+                {
+                    return OpenCCNET.ZhConverter.HantToHans(value!);
+                }
+                catch (Exception)
+                {
+                    // 词典缺失/转换异常:回退内置常用字表
+                    _openccAvailable = false;
+                }
+            }
+
+            return ApplyManualMap(value!);
+        }
+
+        private static void EnsureInitialized()
+        {
+            if (_initialized)
+            {
+                return;
+            }
+
+            lock (InitGate)
+            {
+                if (_initialized)
+                {
+                    return;
+                }
+
+                try
+                {
+                    var baseDir = Path.GetDirectoryName(typeof(HanSimplifier).Assembly.Location) ?? AppContext.BaseDirectory;
+                    var dictionary = Path.Combine(baseDir, "Dictionary");
+                    var jieba = Path.Combine(baseDir, "JiebaResource");
+                    if (Directory.Exists(dictionary) && Directory.Exists(jieba))
+                    {
+                        OpenCCNET.ZhConverter.Initialize(dictionary, jieba, false, OpenCCNET.SegmentMode.Jieba);
+                        _openccAvailable = true;
+                    }
+                }
+                catch (Exception)
+                {
+                    _openccAvailable = false;
+                }
+
+                _initialized = true;
+            }
+        }
+
+        private static string ApplyManualMap(string value)
+        {
+            var sb = new StringBuilder(value.Length);
+            foreach (var c in value)
+            {
+                sb.Append(Map.TryGetValue(c, out var simple) ? simple : c);
+            }
+
+            return sb.ToString();
+        }
+
         private static readonly Dictionary<char, char> Map = new Dictionary<char, char>
         {
             ['葉'] = '叶', ['裏'] = '里', ['裡'] = '里', ['倫'] = '伦', ['傑'] = '杰',
@@ -50,21 +138,5 @@ namespace MusicStrmExtract.Metadata
             ['譯'] = '译', ['擇'] = '择'
         };
 
-        /// <summary>把字符串中的繁体字替换为简体;其余字符原样保留。</summary>
-        public static string Simplify(string? value)
-        {
-            if (string.IsNullOrEmpty(value))
-            {
-                return string.Empty;
-            }
-
-            var sb = new StringBuilder(value.Length);
-            foreach (var c in value)
-            {
-                sb.Append(Map.TryGetValue(c, out var simple) ? simple : c);
-            }
-
-            return sb.ToString();
         }
     }
-}

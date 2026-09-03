@@ -27,6 +27,19 @@ namespace MusicStrmExtract.Tests
         }
 
         [Fact]
+        public void Simplify_OpenCcCoversRareWords()
+        {
+            // 表外生僻字:OpenCC 词级全覆盖;词典未部署时回退手写表(跳过)
+            if (!HanSimplifier.IsOpenCcAvailable)
+            {
+                return;
+            }
+
+            Assert.Equal("郁闷", HanSimplifier.Simplify("鬱悶"));
+            Assert.Equal("啰嗦", HanSimplifier.Simplify("囉嗦"));
+        }
+
+        [Fact]
         public void Simplify_NullOrEmpty_ReturnsEmpty()
         {
             Assert.Equal(string.Empty, HanSimplifier.Simplify(null));
