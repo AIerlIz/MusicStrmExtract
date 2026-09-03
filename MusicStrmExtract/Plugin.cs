@@ -4,7 +4,9 @@ using System.Xml.Linq;
 
 using MediaBrowser.Common;
 using MediaBrowser.Common.Configuration;
+using MediaBrowser.Common.Plugins;
 using MediaBrowser.Controller.Plugins;
+using MediaBrowser.Model.Drawing;
 
 namespace MusicStrmExtract
 {
@@ -12,7 +14,7 @@ namespace MusicStrmExtract
     /// Emby 服务端插件:为音乐库中的 .strm 音频条目补全元数据。
     /// 按歌手/专辑目录结构与文件名轨号锁定 MusicBrainz 专辑并补全元数据。
     /// </summary>
-    public class Plugin : BasePluginSimpleUI<PluginConfiguration>
+    public class Plugin : BasePluginSimpleUI<PluginConfiguration>, IHasThumbImage
     {
         public const string PluginGuid = "6a2f9c4e-8d3b-4f6a-9c1e-2b7d4a5f0e21";
 
@@ -36,6 +38,19 @@ namespace MusicStrmExtract
         public override string Name => "Music Strm Extract";
 
         public override string Description => "按歌手/专辑目录与轨号从 MusicBrainz 补全 .strm 音乐元数据,使 strm 音乐可正常刮削组织";
+
+        public ImageFormat ThumbImageFormat => ImageFormat.Png;
+
+        public Stream GetThumbImage()
+        {
+            var stream = typeof(Plugin).Assembly.GetManifestResourceStream("MusicStrmExtract.icon.png");
+            if (stream is null)
+            {
+                throw new InvalidOperationException("Missing embedded icon resource.");
+            }
+
+            return stream;
+        }
 
         /// <summary>升级到 Simple UI 后首次启动时,把旧版 XML 配置迁移到新 JSON 配置,避免已有设置丢失。</summary>
         private void MigrateLegacyXmlConfiguration()
