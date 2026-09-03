@@ -27,12 +27,6 @@ namespace MusicStrmExtract.Online
 
         public string? ReleaseGroupMbid { get; set; }
 
-        /// <summary>封面(Cover Art Archive,基于 release id)。</summary>
-        public string? CoverArtUrl { get; set; }
-
-        /// <summary>封面候选(按优先级):[release front, release-group front];某一层无封面(CAA 404)时依次尝试。</summary>
-        public List<string> CoverArtCandidates { get; } = new List<string>();
-
         /// <summary>专辑艺人(MB artist-credit 首个名字,用于 AlbumArtists 对齐)。</summary>
         public string? ArtistName { get; set; }
     }
@@ -129,17 +123,6 @@ namespace MusicStrmExtract.Online
                 result.ReleaseGroupMbid = GetString(rg, "id");
             }
 
-            if (!string.IsNullOrWhiteSpace(result.ReleaseMbid))
-            {
-                result.CoverArtUrl = $"https://coverartarchive.org/release/{result.ReleaseMbid}/front-500";
-                result.CoverArtCandidates.Add(result.CoverArtUrl);
-            }
-
-            if (!string.IsNullOrWhiteSpace(result.ReleaseGroupMbid))
-            {
-                result.CoverArtCandidates.Add($"https://coverartarchive.org/release-group/{result.ReleaseGroupMbid}/front-500");
-            }
-
             return result;
         }
 
@@ -172,17 +155,7 @@ namespace MusicStrmExtract.Online
         {
             if (release.TryGetProperty("release-group", out var rg))
             {
-                var primary = GetString(rg, "primary-type");
-                if (!string.IsNullOrWhiteSpace(primary))
-                {
-                    return primary;
-                }
-
-                var list = GetString(rg, "primary-type");
-                if (list is not null)
-                {
-                    return list;
-                }
+                return GetString(rg, "primary-type");
             }
 
             return null;
