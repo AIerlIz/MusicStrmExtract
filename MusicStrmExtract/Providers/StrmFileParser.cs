@@ -91,34 +91,31 @@ namespace MusicStrmExtract.Providers
                 return rawNumber;
             }
 
-            // 评论轨与正式轨使用同一组轨号,或评论轨只是正式轨的子集
-            if (comm.All(reg.Contains))
+            // 优先检查各类结构布局(奇偶交错/前后排列),避免 comm 是 reg 子集时提前返回导致漏判;
+            // 例如 comm={1,3,5} reg={1..8} 是典型的"部分交错"形态,应映射到 1/2/3 而非原始轨号。
+            // 奇偶交错:01/03/05 评论 + 02/04/06 正式 → 都映射到 1/2/3
+            var commIsOdd = comm.All(n => n % 2 == 1) && reg.All(n => n % 2 == 0);
+            var regIsOdd = reg.All(n => n % 2 == 1) && comm.All(n => n % 2 == 0);
+            if ((commIsOdd || regIsOdd) && IsInterleavedPair(comm, reg))
             {
+                var oddSet = commIsOdd ? comm : reg;
+                var evenSet = commIsOdd ? reg : comm;
+                if (oddSet.Contains(rawNumber))
+                {
+                    return (rawNumber + 1) / 2;
+                }
+
+                if (evenSet.Contains(rawNumber))
+                {
+                    return rawNumber / 2;
+                }
+
                 return rawNumber;
             }
 
+            // 前后排列只在等长时有效;部分交错已在上分支处理,此处只需处理等长场景
             if (comm.Length == reg.Length)
             {
-                // 奇偶交错:01/03/05 评论 + 02/04/06 正式 → 都映射到 1/2/3
-                var commIsOdd = comm.All(n => n % 2 == 1) && reg.All(n => n % 2 == 0);
-                var regIsOdd = reg.All(n => n % 2 == 1) && comm.All(n => n % 2 == 0);
-                if ((commIsOdd || regIsOdd) && IsInterleavedPair(comm, reg))
-                {
-                    var oddSet = commIsOdd ? comm : reg;
-                    var evenSet = commIsOdd ? reg : comm;
-                    if (oddSet.Contains(rawNumber))
-                    {
-                        return (rawNumber + 1) / 2;
-                    }
-
-                    if (evenSet.Contains(rawNumber))
-                    {
-                        return rawNumber / 2;
-                    }
-
-                    return rawNumber;
-                }
-
                 // 评论轨接在正式轨之后:正式 1..N,评论 N+1..2N
                 if (IsSequentialFrom(reg, 1) && IsSequentialFrom(comm, reg.Length + 1))
                 {
@@ -130,6 +127,12 @@ namespace MusicStrmExtract.Providers
                 {
                     return isCommentary ? rawNumber : rawNumber - comm.Length;
                 }
+            }
+
+            // 评论轨是正式轨的子集(共享相同轨号、或未命中上分支):按原始轨号返回
+            if (comm.All(reg.Contains))
+            {
+                return rawNumber;
             }
 
             return rawNumber;

@@ -1,3 +1,5 @@
+using System.Linq;
+
 using MusicStrmExtract.Providers;
 
 using Xunit;
@@ -74,6 +76,20 @@ namespace MusicStrmExtract.Tests
         {
             Assert.Equal(7, StrmFileParser.MapCommentaryTrackNumber(7, false, new[] { 1 }, new[] { 2 }));
             Assert.Equal(5, StrmFileParser.MapCommentaryTrackNumber(5, true, new[] { 5 }, new[] { 2 }));
+        }
+
+        [Fact]
+        public void MapCommentaryTrackNumber_PartialSubset_InterleavedNotApplicable_ReturnsRaw()
+        {
+            // comm={1,3,5} 是 reg={1..8} 的子集，但 reg 混合了奇偶，不是合法交错形态
+            // 此时应回退到原始轨号返回（不在合法交错场景内不做映射）
+            var commentary = new[] { 1, 3, 5 };
+            var regular = Enumerable.Range(1, 8).ToArray();
+
+            Assert.Equal(1, StrmFileParser.MapCommentaryTrackNumber(1, true, commentary, regular));
+            Assert.Equal(3, StrmFileParser.MapCommentaryTrackNumber(3, true, commentary, regular));
+            Assert.Equal(5, StrmFileParser.MapCommentaryTrackNumber(5, true, commentary, regular));
+            Assert.Equal(2, StrmFileParser.MapCommentaryTrackNumber(2, false, commentary, regular));
         }
 
         [Theory]

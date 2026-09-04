@@ -156,11 +156,52 @@ namespace MusicStrmExtract.Online
                 .Take(MaxCandidateReleases)
                 .ToList();
 
+            // 尝试用 release-group 全量加权评分选出最优版本:
+            // 从 top-1 候选取 release-group-id,拉取该 RG 下全部 release,按 barcode/status/格式等维度打分。
+            // 若 RG 查询失败、仅有一个 release、或全部不满足布局校验,回退到原有 top-10 排序逻辑。
+            AlbumSearchResult? firstFallback = null;
+            var topRgInfo = ordered[0].Item.TryGetProperty("release-group", out var rgEl) ? rgEl : default;
+            var topRgMbid = GetString(topRgInfo, "id");
+            if (!string.IsNullOrWhiteSpace(topRgMbid))
+            {
+                try
+                {
+                    var rgRoot = await _api.GetReleaseGroupReleasesAsync(topRgMbid, ct).ConfigureAwait(false);
+                    if (rgRoot.TryGetProperty("releases", out var rgReleases) && rgReleases.GetArrayLength() > 1)
+                    {
+                        var localYear = ParseYear(albumFolderName);
+                        var ranked = ReleaseGroupScorer.ScoreAll(rgReleases, localYear);
+                        foreach (var (release, _) in ranked)
+                        {
+                            var releaseMbid = GetString(release, "id");
+                            if (string.IsNullOrWhiteSpace(releaseMbid)) continue;
+                            var releaseRoot = await _api.GetReleaseAsync(releaseMbid, ct).ConfigureAwait(false);
+                            var medias = ParseReleaseMedias(releaseRoot);
+                            if (medias.Count == 0) continue;
+                            var mapping = MapLocalDiscsToMedias(localDiscs, medias);
+                            if (mapping is null) continue;
+                            if (HasExactTrackCount(localDiscs, mapping))
+                                return BuildAlbumResult(release, medias);
+                            firstFallback ??= BuildAlbumResult(release, medias);
+                        }
+
+                        // RG 路径无任何布局命中时,继续走下方 top-10 循环(可能含其它 RG 的 release)
+                        if (firstFallback is not null)
+                        {
+                            return firstFallback;
+                        }
+                    }
+                }
+                catch
+                {
+                    // RG 查询失败,降级到下方原有 top-10 循环
+                }
+            }
+
             // 逐个候选取 tracklist,用本地碟组布局校验 media 映射;
             // 轨数完全一致(每碟本地轨数 == release media 轨数)优先,避免普通版被豪华版/加歌版抢先选中。
             // 注意:release 详情取回的网络/解析异常向上抛,由调用方区分"MB 不可达(不缓存)"与"确认未命中";
             // 吞成 Found=false 会让暂时性故障被 30 分钟缓存锁死。
-            AlbumSearchResult? firstFallback = null;
             foreach (var best in ordered)
             {
                 var releaseMbid = GetString(best.Item, "id");
@@ -517,5 +558,11 @@ namespace MusicStrmExtract.Online
             var m = Regex.Match(date, @"\b(1[89]\d{2}|20\d{2})\b");
             return m.Success ? int.Parse(m.Value, CultureInfo.InvariantCulture) : null;
         }
+
+        /// <summary>
+        /// 按 barcode 精确搜索 release,并校验本地碟组布局。
+        /// 优先使用 barcode 命中版本(用户物理介质确认过的版本),避免多地区同名 release 选错。
+        /// 返回 Found=true 表示匹配成功;false 表示未匹配(调用方回退到常规搜索)。
+        /// </summary>
     }
 }

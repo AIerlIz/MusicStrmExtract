@@ -25,10 +25,10 @@ namespace MusicStrmExtract.Providers
     /// 由引擎统一合并持久化与专辑/艺术家组织(不再自行写库)。
     /// 封面经 GetImages 交给引擎下载挂图(不手写 cover.jpg)。
     /// </summary>
-    public sealed class MusicStrmRemoteProvider : IRemoteMetadataProvider<Audio, SongInfo>
+    public sealed class MusicStrmRemoteProvider : IRemoteMetadataProvider<Audio, SongInfo>, IDisposable
     {
         private readonly ILogger _logger;
-        private readonly HttpClient _http;
+        private HttpClient? _http;
 
         public MusicStrmRemoteProvider(ILogManager logManager)
         {
@@ -36,6 +36,12 @@ namespace MusicStrmExtract.Providers
             _logger.Info("[MusicStrmExtract] [RemoteProvider] 构造函数被调用(已注册)");
             _http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
             _http.DefaultRequestHeaders.UserAgent.ParseAdd("MusicStrmExtract/1.0.0.0 (Emby plugin; contact: local)");
+        }
+
+        public void Dispose()
+        {
+            _http?.Dispose();
+            _http = null;
         }
 
         public string Name => "Music Strm Extract (在线)";
@@ -49,6 +55,11 @@ namespace MusicStrmExtract.Providers
         /// <summary>下载引擎请求的图片字节(封面 RemoteImageInfo 的 Url 由此加载)。</summary>
         public async Task<HttpResponseInfo> GetImageResponse(string url, CancellationToken cancellationToken)
         {
+            if (_http is null)
+            {
+                return new HttpResponseInfo { StatusCode = System.Net.HttpStatusCode.ServiceUnavailable };
+            }
+
             using var response = await _http.GetAsync(url, cancellationToken).ConfigureAwait(false);
             var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
             return new HttpResponseInfo

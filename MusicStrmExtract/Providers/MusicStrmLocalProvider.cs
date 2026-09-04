@@ -164,12 +164,12 @@ namespace MusicStrmExtract.Providers
         private static void PruneCache<T>(ConcurrentDictionary<string, (DateTime CreatedUtc, T Value)> cache)
         {
             var now = DateTime.UtcNow;
-            foreach (var kv in cache)
+            var expiredKeys = cache.Keys
+                .Where(k => now - cache[k].CreatedUtc > TimeSpan.FromMinutes(30))
+                .ToArray();
+            foreach (var key in expiredKeys)
             {
-                if (now - kv.Value.CreatedUtc > TimeSpan.FromMinutes(30))
-                {
-                    cache.TryRemove(kv.Key, out _);
-                }
+                cache.TryRemove(key, out _);
             }
 
             if (cache.Count > CacheMaxEntries)
@@ -224,7 +224,7 @@ namespace MusicStrmExtract.Providers
                 return false; // 本文件无轨号,无法按轨取数
             }
 
-            var (localDiscs, rawTracks) = ScanAlbumDiscs(albumDir);
+            var (localDiscs, rawTracks) = ScanAlbumDiscs(albumDir, _logger);
             if (localDiscs.Count == 0)
             {
                 return false;
@@ -350,10 +350,13 @@ namespace MusicStrmExtract.Providers
 
         private static string BuildAlbumCacheKey(string albumFolder, string? artistFolder, List<LocalDisc> localDiscs)
         {
-            var layout = string.Join("|", localDiscs.Select(d =>
-                (d.DiscNumber?.ToString(CultureInfo.InvariantCulture) ?? "_")
-                + ":"
-                + string.Join("-", d.TrackNumbers)));
+            // 对碟组按 DiscNumber 和 TrackNumbers 排序,保证目录枚举非确定性下缓存 Key 稳定
+            var layout = string.Join("|", localDiscs
+                .OrderBy(d => d.DiscNumber ?? int.MaxValue)
+                .Select(d =>
+                    (d.DiscNumber?.ToString(CultureInfo.InvariantCulture) ?? "_")
+                    + ":"
+                    + string.Join("-", d.TrackNumbers.OrderBy(n => n))));
             return $"{albumFolder}|{artistFolder}|{layout}";
         }
 
@@ -361,7 +364,7 @@ namespace MusicStrmExtract.Providers
         /// 扫描专辑目录上的 .strm(含 Disc N 子目录),构建本地碟组。
         /// 评论轨与正式轨先按原始轨号收集,再做评论轨归一化,避免 1..26 交错轨号破坏 release 覆盖校验。
         /// </summary>
-        private static (List<LocalDisc> Discs, Dictionary<int, List<(int Number, bool IsCommentary)>> RawTracks) ScanAlbumDiscs(string albumDir)
+        private static (List<LocalDisc> Discs, Dictionary<int, List<(int Number, bool IsCommentary)>> RawTracks) ScanAlbumDiscs(string albumDir, ILogger logger)
         {
             // 解析结果中碟号只会是 null 或正整数,用 0 作为无碟号的字典键。
             var rawGroups = new Dictionary<int, List<(int Number, bool IsCommentary)>>();
@@ -417,9 +420,10 @@ namespace MusicStrmExtract.Providers
                     }
                 }
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // 目录读取失败时返回已收集到的碟组
+                // 目录读取失败时返回已收集到的碟组;部分已收集的数据仍可用于定位
+                logger.Warn($"[MusicStrmExtract] [LocalProvider] 扫描专辑目录失败: Path={albumDir} -> {ex.Message}");
             }
 
             var result = new List<LocalDisc>();
