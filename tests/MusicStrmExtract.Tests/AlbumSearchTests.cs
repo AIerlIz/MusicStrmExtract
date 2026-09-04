@@ -139,6 +139,74 @@ namespace MusicStrmExtract.Tests
             Assert.Equal(1, chosen!.Position);
         }
 
+        [Fact]
+        public void MapLocalDiscsToMedias_MapsExplicitDiscToMediaPosition()
+        {
+            var disc1 = LocalDisc(1, 1, 2);
+            var disc2 = LocalDisc(2, 1);
+            var disc3 = LocalDisc(3, 1);
+            var root = BuildRelease(
+                (1, new[] { (1, "Lavender Haze"), (2, "Maroon") }),
+                (2, new[] { (1, "You're Losing Me") }),
+                (3, new[] { (1, "Hits Different") }));
+
+            var map = AlbumSearch.MapLocalDiscsToMedias(
+                new[] { disc1, disc2, disc3 },
+                AlbumSearch.ParseReleaseMedias(root));
+
+            Assert.NotNull(map);
+            Assert.Equal(1, map![disc1].Position);
+            Assert.Equal(2, map[disc2].Position);
+            Assert.Equal(3, map[disc3].Position);
+        }
+
+        [Fact]
+        public void MapLocalDiscsToMedias_RejectsWhenDiscPositionMissing()
+        {
+            var locals = new[] { LocalDisc(1, 1, 2), LocalDisc(2, 1) };
+            var root = BuildRelease((1, new[] { (1, "A"), (2, "B") }));
+
+            var map = AlbumSearch.MapLocalDiscsToMedias(locals, AlbumSearch.ParseReleaseMedias(root));
+
+            Assert.Null(map);
+        }
+
+        [Fact]
+        public void MapLocalDiscsToMedias_RejectsWhenMediaDoesNotCoverTrackNumbers()
+        {
+            var locals = new[] { LocalDisc(1, 1, 2, 3) };
+            var root = BuildRelease((1, new[] { (1, "A"), (2, "B") }));
+
+            var map = AlbumSearch.MapLocalDiscsToMedias(locals, AlbumSearch.ParseReleaseMedias(root));
+
+            Assert.Null(map);
+        }
+
+        [Fact]
+        public void MapLocalDiscsToMedias_RejectsDuplicateDiscPosition()
+        {
+            var locals = new[] { LocalDisc(1, 1), LocalDisc(1, 2) };
+            var root = BuildRelease((1, new[] { (1, "A"), (2, "B") }));
+
+            var map = AlbumSearch.MapLocalDiscsToMedias(locals, AlbumSearch.ParseReleaseMedias(root));
+
+            Assert.Null(map);
+        }
+
+        [Fact]
+        public void MapLocalDiscsToMedias_ImplicitGroupUsesLowestCoveringMedia()
+        {
+            var local = LocalDisc(null, 1, 2, 3);
+            var root = BuildRelease(
+                (1, new[] { (4, "D"), (5, "E") }),
+                (2, new[] { (1, "A"), (2, "B"), (3, "C") }));
+
+            var map = AlbumSearch.MapLocalDiscsToMedias(new[] { local }, AlbumSearch.ParseReleaseMedias(root));
+
+            Assert.NotNull(map);
+            Assert.Equal(2, map![local].Position);
+        }
+
         // ===== 测试数据构造 =====
 
         private static List<int> Local(int fromNumber, int count)
@@ -146,6 +214,13 @@ namespace MusicStrmExtract.Tests
             return Enumerable.Range(fromNumber, count)
                 .Select(n => n)
                 .ToList();
+        }
+
+        private static LocalDisc LocalDisc(int? discNumber, params int[] tracks)
+        {
+            var disc = new LocalDisc { DiscNumber = discNumber };
+            disc.TrackNumbers.AddRange(tracks);
+            return disc;
         }
 
         private static (int, string)[] Tracks(int fromNumber, int count)

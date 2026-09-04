@@ -61,18 +61,21 @@ namespace MusicStrmExtract.Online
         /// <summary>专辑艺人 MBID(artist-credit 首个 id)。</summary>
         public string? AlbumArtistMbid { get; set; }
 
-        /// <summary>选定 media 的轨道映射(按轨号升序;本专辑整张一次取得)。</summary>
-        public List<AlbumTrack> Tracks { get; } = new List<AlbumTrack>();
+        /// <summary>release 全部 media(碟)的轨道映射;本地碟组按 mapping 逐碟定位。</summary>
+        public List<ReleaseMedia> Medias { get; } = new List<ReleaseMedia>();
     }
 
     /// <summary>
     /// "按艺人 + 专辑文件夹名锁定 MusicBrainz release":把专辑文件夹名(如 "叶惠美 (2003)")净化成核心名("叶惠美"),
-    /// 用 release:"专辑" AND artist:"艺人" 查询取回 release,再用本地轨号覆盖校验/选择 media,
-    /// 返回该专辑的完整轨道映射(每轨 recording MBID/标题)——单曲按轨号直接取数,无需文件名标题匹配。
-    /// 目录名原样透传给 MusicBrainz,不参与本地文本比较;版本选择稳定(Official 优先 → Album 主类型 → 完整日期优先)。
+    /// 用 release:"专辑" AND artist:"艺人" 查询候选 release,再按本地碟组(碟号+轨号)校验每个候选的 media 布局,
+    /// 返回首个布局匹配的 release 的完整轨道映射(每轨 recording MBID/标题)——单曲按碟号+轨号取数。
+    /// 目录名原样透传给 MusicBrainz,不参与本地文本比较;候选顺序稳定(Official 优先 → Album 主类型 → 完整日期优先 → score)。
     /// </summary>
     public sealed class AlbumSearch
     {
+        /// <summary>逐个尝试的候选 release 上限;布局不匹配时继续尝试下一个,避免多碟选到错误的单碟版本。</summary>
+        public const int MaxCandidateReleases = 5;
+
         private readonly MusicBrainzApi _api;
 
         public AlbumSearch(MusicBrainzApi api)
@@ -95,19 +98,22 @@ namespace MusicStrmExtract.Online
         }
 
         /// <summary>
-        /// 专辑轨道映射搜索:搜索 + 取 tracklist + 本地指纹校验选碟。
-        /// 未找到 release、或所选 release 的 media 均未覆盖本地轨号时返回 Found=false
+        /// 专辑轨道映射搜索:搜索候选 release + 取各自 tracklist + 本地碟组指纹校验选碟。
+        /// 未找到 release、或候选 release 的 media 布局均不匹配本地碟组时返回 Found=false
         /// (调用方按未命中处理)。
         /// </summary>
         public async Task<AlbumSearchResult> SearchForTrackMapAsync(
             string albumFolderName,
             string? artistName,
-            IReadOnlyList<int> localTrackNumbers,
+            IReadOnlyList<LocalDisc> localDiscs,
             CancellationToken ct)
         {
             var result = new AlbumSearchResult();
             var clean = CleanAlbumName(albumFolderName);
-            if (string.IsNullOrWhiteSpace(clean) || localTrackNumbers is null || localTrackNumbers.Count == 0)
+            if (string.IsNullOrWhiteSpace(clean)
+                || localDiscs is null
+                || localDiscs.Count == 0
+                || !localDiscs.Any(d => d.TrackNumbers.Count > 0))
             {
                 return result;
             }
@@ -140,48 +146,52 @@ namespace MusicStrmExtract.Online
             // 本地目录文本已作为查询条件交给 MB,不再做字形过滤;稳定排序只按 MB 元数据:
             // status(Official 0 < Pseudo-Release 3) -> 主类型 Album -> 完整日期优先 -> 日期最早
             // (空日期排最后)-> score 降序 -> 官方名(字典序)
-            var best = scored
+            var ordered = scored
                 .OrderBy(x => StatusRank(x.Status))
                 .ThenBy(x => string.Equals(x.PrimaryType, "Album", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
                 .ThenBy(x => IsIncompleteDate(x.Date) ? 1 : 0)
                 .ThenBy(x => string.IsNullOrWhiteSpace(x.Date) ? "9999" : x.Date!)
                 .ThenByDescending(x => x.Score)
                 .ThenBy(x => x.Title, StringComparer.Ordinal)
-                .First();
+                .Take(MaxCandidateReleases)
+                .ToList();
 
-            // 取 tracklist,用本地轨号覆盖校验并选择 media。
+            // 逐个候选取 tracklist,用本地碟组布局校验 media 映射。
             // 注意:release 详情取回的网络/解析异常向上抛,由调用方区分"MB 不可达(不缓存)"与"确认未命中";
             // 吞成 Found=false 会让暂时性故障被 30 分钟缓存锁死。
-            var releaseMbid = GetString(best.Item, "id");
-            if (string.IsNullOrWhiteSpace(releaseMbid))
+            foreach (var best in ordered)
             {
+                var releaseMbid = GetString(best.Item, "id");
+                if (string.IsNullOrWhiteSpace(releaseMbid))
+                {
+                    continue;
+                }
+
+                var releaseRoot = await _api.GetReleaseAsync(releaseMbid, ct).ConfigureAwait(false);
+                var medias = ParseReleaseMedias(releaseRoot);
+                if (medias.Count == 0 || MapLocalDiscsToMedias(localDiscs, medias) is null)
+                {
+                    continue;
+                }
+
+                result.Found = true;
+                result.Title = best.Title;
+                result.Year = ParseYear(best.Date);
+                result.ReleaseMbid = releaseMbid;
+                result.ArtistName = best.Artists.FirstOrDefault();
+                var artistIds = GetArtistCreditIds(best.Item);
+                result.AlbumArtistMbid = artistIds.FirstOrDefault();
+                if (best.Item.TryGetProperty("release-group", out var rg))
+                {
+                    result.ReleaseGroupMbid = GetString(rg, "id");
+                }
+
+                foreach (var media in medias)
+                {
+                    result.Medias.Add(media);
+                }
+
                 return result;
-            }
-
-            var releaseRoot = await _api.GetReleaseAsync(releaseMbid, ct).ConfigureAwait(false);
-
-            var medias = ParseReleaseMedias(releaseRoot);
-            var chosen = SelectBestMedia(localTrackNumbers, medias);
-            if (chosen is null)
-            {
-                return result;
-            }
-
-            result.Found = true;
-            result.Title = best.Title;
-            result.Year = ParseYear(best.Date);
-            result.ReleaseMbid = releaseMbid;
-            result.ArtistName = best.Artists.FirstOrDefault();
-            var artistIds = GetArtistCreditIds(best.Item);
-            result.AlbumArtistMbid = artistIds.FirstOrDefault();
-            if (best.Item.TryGetProperty("release-group", out var rg))
-            {
-                result.ReleaseGroupMbid = GetString(rg, "id");
-            }
-
-            foreach (var t in chosen.Tracks)
-            {
-                result.Tracks.Add(t);
             }
 
             return result;
@@ -239,12 +249,7 @@ namespace MusicStrmExtract.Online
             return medias;
         }
 
-        /// <summary>
-        /// 本地轨号覆盖校验候选 media:
-        ///   判定:media 必须包含本地全部轨号(本地为普通版且 MB 为含 bonus 的版本也通过;
-        ///   MV/附加碟因轨号缺失被淘汰)。本地轨号只来自文件名数字前缀,不读取文件名标题。
-        /// 在通过的 media 中取 Position 最小者;无通过返回 null。
-        /// </summary>
+        /// <summary>单碟兼容入口:本地为一组无碟号轨号时,选 Position 最小且覆盖全部轨号的 media。</summary>
         public static ReleaseMedia? SelectBestMedia(IReadOnlyList<int> localTrackNumbers, IReadOnlyList<ReleaseMedia> medias)
         {
             if (localTrackNumbers is null || localTrackNumbers.Count == 0 || medias is null || medias.Count == 0)
@@ -261,21 +266,75 @@ namespace MusicStrmExtract.Online
                 return null;
             }
 
-            ReleaseMedia? best = null;
-            foreach (var media in medias.OrderBy(m => m.Position))
+            var group = new LocalDisc();
+            group.TrackNumbers.AddRange(localTrackNumbers);
+            var map = MapLocalDiscsToMedias(new[] { group }, medias);
+            return map?.Values.FirstOrDefault();
+        }
+
+        /// <summary>
+        /// 把本地碟组映射到 release 的 media:
+        ///   带碟号的组按 media.Position 一一对应并校验轨号覆盖,失败即整张未命中;
+        ///   无碟号的组在剩余 media 中取 Position 最小且覆盖轨号者(单碟保持原行为)。
+        /// 任一碟组无法映射时返回 null,避免产生半对半错的专辑。
+        /// </summary>
+        public static Dictionary<LocalDisc, ReleaseMedia>? MapLocalDiscsToMedias(
+            IReadOnlyList<LocalDisc> localDiscs,
+            IReadOnlyList<ReleaseMedia> medias)
+        {
+            if (localDiscs is null || localDiscs.Count == 0 || medias is null || medias.Count == 0)
             {
-                var mediaNumbers = media.Tracks
-                    .Select(t => t.Number)
-                    .Where(n => n > 0)
-                    .ToHashSet();
-                if (localNumbers.All(mediaNumbers.Contains))
-                {
-                    best = media;
-                    break;
-                }
+                return null;
             }
 
-            return best;
+            var explicitGroups = localDiscs
+                .Where(d => d.DiscNumber is > 0)
+                .OrderBy(d => d.DiscNumber!.Value)
+                .ToList();
+            var implicitGroups = localDiscs
+                .Where(d => d.DiscNumber is not > 0)
+                .ToList();
+
+            var usedPositions = new HashSet<int>();
+            var map = new Dictionary<LocalDisc, ReleaseMedia>();
+
+            foreach (var group in explicitGroups)
+            {
+                var media = medias.FirstOrDefault(m => m.Position == group.DiscNumber!.Value);
+                if (media is null || !usedPositions.Add(media.Position) || !Covers(media, group.TrackNumbers))
+                {
+                    return null;
+                }
+
+                map.Add(group, media);
+            }
+
+            var remaining = medias
+                .Where(m => !usedPositions.Contains(m.Position))
+                .OrderBy(m => m.Position)
+                .ToList();
+            foreach (var group in implicitGroups.OrderByDescending(g => g.TrackNumbers.Count))
+            {
+                var media = remaining.FirstOrDefault(m => Covers(m, group.TrackNumbers));
+                if (media is null)
+                {
+                    return null;
+                }
+
+                remaining.Remove(media);
+                map.Add(group, media);
+            }
+
+            return map;
+        }
+
+        private static bool Covers(ReleaseMedia media, IReadOnlyCollection<int> trackNumbers)
+        {
+            var mediaNumbers = media.Tracks
+                .Select(t => t.Number)
+                .Where(n => n > 0)
+                .ToHashSet();
+            return trackNumbers.Where(n => n > 0).All(mediaNumbers.Contains);
         }
 
         private static void ApplyArtistCredit(AlbumTrack track, JsonElement recording)

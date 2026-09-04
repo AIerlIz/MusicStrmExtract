@@ -13,7 +13,7 @@ Music Strm Extract 是一个 Emby 插件。它根据音乐库的目录结构和�
 
 ## 目录结构
 
-插件按下面这种两层结构工作：
+插件按下面这种两层结构工作:单碟时 `.strm` 直接在专辑目录下:
 
 ```text
 音乐库/
@@ -25,13 +25,31 @@ Music Strm Extract 是一个 Emby 插件。它根据音乐库的目录结构和�
     七里香 (2004)/
       01 - 我的地盘.flac.strm
       02 - 七里香.flac.strm
-      ...
+  ...
+```
+
+多碟专辑可以使用 `Disc N`/`CD N` 子目录,每个子目录对应一张碟:
+
+```text
+音乐库/
+  Taylor Swift/
+    Midnights (2022)/
+      Disc 1/
+        01 - Lavender Haze.m4a.strm
+        02 - Maroon.m4a.strm
+        ...
+      Disc 2/
+        01 - You're Losing Me.m4a.strm
+      Disc 3/
+        01 - Hits Different.m4a.strm
 ```
 
 要点：
 
 - 第一层是歌手文件夹，第二层是专辑文件夹，`.strm` 直接放在专辑文件夹里。
+- 多碟时第二层是专辑文件夹，第三层是 `Disc 1`/`CD2` 等碟目录，`.strm` 放在碟目录里。
 - 文件名以轨号开头，例如 `01 - `，轨号应当和 MusicBrainz 专辑的 track number 一致。
+- 在专辑目录平铺时也支持 `1-01 - `、`CD1-01 - `、`01.01 - ` 这类碟号+轨号文件名。
 - 一张专辑内的轨号建议连续且不重复。
 - 文件名里的标题部分不会参与匹配，可以简写或省略。
 - 专辑文件夹名带年份也可以，例如 `叶惠美 (2003)`、`七里香-2004`。
@@ -86,5 +104,6 @@ Music Strm Extract 是一个 Emby 插件。它根据音乐库的目录结构和�
 - 插件只依赖目录结构和文件名轨号，不读取 `.strm` 文件内容，也不要求远程文件可播放。
 - 插件只使用 MusicBrainz 作为在线数据源；MusicBrainz 不可达时不会从其它来源补全。
 - 官方 MusicBrainz 在部分地区可能不稳定，建议配置稳定的镜像或代理。
-- 目录方式主要面向单碟专辑。多碟、分碟目录或同一专辑文件夹内轨号不唯一时，目录映射可能无法命中，请按单碟目录整理。
+- 多碟目录按碟号对应 MusicBrainz 的 media 位置，适合 MB 数据本身就是多碟（2xCD、3xLP 等）的专辑。
+- 如果本地把 bonus 曲单独分了碟，但 MusicBrainz 把该版本建模成单张合并 tracklist（例如 Taylor Swift《Midnights》），碟号无法对应到独立 media，这类专辑仍可能无法命中。
 - 封面来自 Cover Art Archive，需要 MusicBrainz/Cover Art Archive 网络可达。

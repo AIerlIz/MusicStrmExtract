@@ -63,6 +63,19 @@ namespace MusicStrmExtract.Providers
         public async Task<MetadataResult<Audio>> GetMetadata(SongInfo info, CancellationToken cancellationToken)
         {
             var result = new MetadataResult<Audio>();
+
+            if (info is null)
+            {
+                return result;
+            }
+
+            // strm 条目的元数据只由目录定位 Provider 负责:库里可能残留旧/脏 MBID,
+            // 在线 Provider 若基于它们精确取回会覆盖本地正确结果;封面仍由 GetImages 提供。
+            if (info.Path?.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return result;
+            }
+
             var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
 
             var embedded = FromLookupInfo(info);

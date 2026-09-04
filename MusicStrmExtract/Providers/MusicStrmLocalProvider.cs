@@ -6,7 +6,6 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -42,36 +41,41 @@ namespace MusicStrmExtract.Providers
 
         public string Name => "Music Strm Extract (目录)";
 
-        /// <summary>strm 文件名数字轨号解析:"01 - 我的地盤.flac.strm" → 1;无数字前缀则 Number=-1。</summary>
-        private static readonly Regex StrmNumberRegex = new Regex(
-            @"^(\d{1,3})\s*[-_]\s*",
-            RegexOptions.Compiled);
-
-        /// <summary>按 strm 路径解析"艺人\专辑"文件夹结构(strm 直接位于专辑文件夹)。
-        /// 返回 (专辑文件夹名, 艺人文件夹名);结构不符时对应项为 null。</summary>
-        private static (string? AlbumFolder, string? ArtistFolder) GetFolderStructure(string strmPath)
+        /// <summary>按 strm 路径解析"艺人\专辑\碟"文件夹结构。
+        /// 返回 (专辑文件夹名, 艺人文件夹名, 专辑实际目录, 碟号);strm 直接在专辑目录时碟号为 null,
+        /// 位于 "Album/Disc N/" 时解析出碟号并上移一级专辑目录。</summary>
+        private static (string? AlbumFolder, string? ArtistFolder, string? AlbumDir, int? DiscNumber) GetFolderStructure(string strmPath)
         {
-            var albumDir = Path.GetDirectoryName(strmPath);
-            if (string.IsNullOrWhiteSpace(albumDir))
+            var fileDir = Path.GetDirectoryName(strmPath);
+            if (string.IsNullOrWhiteSpace(fileDir))
             {
-                return (null, null);
+                return (null, null, null, null);
             }
 
-            var artistDir = Path.GetDirectoryName(albumDir);
+            var discNumber = StrmFileParser.ParseDiscFolderName(Path.GetFileName(fileDir));
+            if (discNumber is not null && !string.IsNullOrWhiteSpace(Path.GetDirectoryName(fileDir)))
+            {
+                var albumDir = Path.GetDirectoryName(fileDir)!;
+                var artistDir = Path.GetDirectoryName(albumDir);
+                return (
+                    Path.GetFileName(albumDir),
+                    string.IsNullOrWhiteSpace(artistDir) ? null : Path.GetFileName(artistDir),
+                    albumDir,
+                    discNumber);
+            }
+
+            var artistDir2 = Path.GetDirectoryName(fileDir);
             return (
-                Path.GetFileName(albumDir),
-                string.IsNullOrWhiteSpace(artistDir) ? null : Path.GetFileName(artistDir));
+                Path.GetFileName(fileDir),
+                string.IsNullOrWhiteSpace(artistDir2) ? null : Path.GetFileName(artistDir2),
+                fileDir,
+                null);
         }
 
-        /// <summary>引擎不写 provider 的 Audio.Album 且 AlbumId 只读,此处对真实条目直写 Album/AlbumArtists
-        /// (UpdateToRepository 实测有效),后续库扫描会按新值重新归组 MusicAlbum。</summary>
-        private void SyncAlbumField(ItemInfo info, string? album, System.Collections.Generic.IEnumerable<string> albumArtists)
+        /// <summary>引擎合并时可能被 RemoteProvider(基于库中旧 MBID 的在线结果)覆盖,这里把本地
+        /// 目录定位得到的最终字段直写真实条目(UpdateToRepository 实测有效),保证本地结果优先。</summary>
+        private void SyncRepositoryItem(ItemInfo info, Audio item)
         {
-            if (string.IsNullOrWhiteSpace(album))
-            {
-                return;
-            }
-
             try
             {
                 var real = _libraryManager.GetItemList(new InternalItemsQuery
@@ -88,13 +92,14 @@ namespace MusicStrmExtract.Providers
                 }
 
                 var changed = false;
-                if (!string.Equals(real.Album, album, StringComparison.Ordinal))
+                if (!string.IsNullOrWhiteSpace(item.Album)
+                    && !string.Equals(real.Album, item.Album, StringComparison.Ordinal))
                 {
-                    real.Album = album;
+                    real.Album = item.Album;
                     changed = true;
                 }
 
-                var wantedArtists = albumArtists.Where(a => !string.IsNullOrWhiteSpace(a)).ToArray();
+                var wantedArtists = item.AlbumArtists.Where(a => !string.IsNullOrWhiteSpace(a)).ToArray();
                 if (wantedArtists.Length > 0
                     && !real.AlbumArtists.SequenceEqual(wantedArtists, StringComparer.Ordinal))
                 {
@@ -102,15 +107,49 @@ namespace MusicStrmExtract.Providers
                     changed = true;
                 }
 
+                if (!string.IsNullOrWhiteSpace(item.Name)
+                    && !string.Equals(real.Name, item.Name, StringComparison.Ordinal))
+                {
+                    real.Name = item.Name;
+                    changed = true;
+                }
+
+                if (item.ProductionYear != real.ProductionYear)
+                {
+                    real.ProductionYear = item.ProductionYear;
+                    changed = true;
+                }
+
+                if (item.IndexNumber != real.IndexNumber)
+                {
+                    real.IndexNumber = item.IndexNumber;
+                    changed = true;
+                }
+
+                if (item.ParentIndexNumber != real.ParentIndexNumber)
+                {
+                    real.ParentIndexNumber = item.ParentIndexNumber;
+                    changed = true;
+                }
+
+                foreach (var kv in item.ProviderIds)
+                {
+                    if (!real.ProviderIds.TryGetValue(kv.Key, out var current) || current != kv.Value)
+                    {
+                        real.ProviderIds[kv.Key] = kv.Value;
+                        changed = true;
+                    }
+                }
+
                 if (changed)
                 {
                     real.UpdateToRepository(ItemUpdateType.MetadataEdit);
-                    _logger.Info($"[MusicStrmExtract] [LocalProvider] 直写真实条目 Album: Id={real.Id} Album='{real.Album}'");
+                    _logger.Info($"[MusicStrmExtract] [LocalProvider] 直写真实条目: Id={real.Id} Name='{real.Name}' Album='{real.Album}' MBTrack={item.ProviderIds.GetValueOrDefault("MusicBrainzTrack")}");
                 }
             }
             catch (Exception ex)
             {
-                _logger.Error($"[MusicStrmExtract] [LocalProvider] 直写 Album 失败: Path={info.Path} -> {ex.Message}");
+                _logger.Error($"[MusicStrmExtract] [LocalProvider] 直写条目失败: Path={info.Path} -> {ex.Message}");
             }
         }
 
@@ -155,9 +194,11 @@ namespace MusicStrmExtract.Providers
             var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
 
             // ===== 主路径:专辑轨道定位(艺人/专辑文件夹 → MB release tracklist;零远程探测)=====
-            var (albumFolder, artistFolder) = GetFolderStructure(info.Path);
+            var (albumFolder, artistFolder, albumDir, discNumber) = GetFolderStructure(info.Path);
             if (!string.IsNullOrWhiteSpace(albumFolder)
-                && await TryResolveByAlbumTrackAsync(info, albumFolder, artistFolder, config, result, cancellationToken).ConfigureAwait(false))
+                && !string.IsNullOrWhiteSpace(albumDir)
+                && await TryResolveByAlbumTrackAsync(
+                    info, albumFolder, artistFolder, albumDir, discNumber, config, result, cancellationToken).ConfigureAwait(false))
             {
                 return result;
             }
@@ -171,24 +212,20 @@ namespace MusicStrmExtract.Providers
             ItemInfo info,
             string albumFolder,
             string? artistFolder,
+            string albumDir,
+            int? folderDisc,
             PluginConfiguration config,
             MetadataResult<Audio> result,
             CancellationToken ct)
         {
-            var albumDir = Path.GetDirectoryName(info.Path);
-            if (string.IsNullOrWhiteSpace(albumDir))
-            {
-                return false;
-            }
-
-            var selfNumber = ParseStrmFileName(info.Path);
+            var (fileDisc, selfNumber) = StrmFileParser.ParseFileName(info.Path);
             if (selfNumber <= 0)
             {
                 return false; // 本文件无轨号,无法按轨取数
             }
 
-            var localTracks = ScanAlbumTracks(albumDir);
-            if (localTracks.Count == 0)
+            var localDiscs = ScanAlbumDiscs(albumDir);
+            if (localDiscs.Count == 0)
             {
                 return false;
             }
@@ -197,7 +234,12 @@ namespace MusicStrmExtract.Providers
             try
             {
                 album = await GetAlbumTrackMapAsync(
-                    $"{albumFolder}|{artistFolder}", albumFolder, artistFolder, localTracks, config, ct).ConfigureAwait(false);
+                    BuildAlbumCacheKey(albumFolder, artistFolder, localDiscs),
+                    albumFolder,
+                    artistFolder,
+                    localDiscs,
+                    config,
+                    ct).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
             {
@@ -211,7 +253,19 @@ namespace MusicStrmExtract.Providers
                 return false;
             }
 
-            var track = album.Tracks.FirstOrDefault(t => t.Number == selfNumber);
+            var mapping = AlbumSearch.MapLocalDiscsToMedias(localDiscs, album.Medias);
+            if (mapping is null)
+            {
+                return false;
+            }
+
+            var group = localDiscs.FirstOrDefault(d => d.DiscNumber == (folderDisc ?? fileDisc));
+            if (group is null || !mapping.TryGetValue(group, out var media))
+            {
+                return false;
+            }
+
+            var track = media.Tracks.FirstOrDefault(t => t.Number == selfNumber);
             if (track is null)
             {
                 return false;
@@ -229,6 +283,7 @@ namespace MusicStrmExtract.Providers
                 Album = album.Title,
                 ProductionYear = album.Year,
                 IndexNumber = track.Number,
+                ParentIndexNumber = group.DiscNumber is not null || localDiscs.Count > 1 ? media.Position : (int?)null,
                 Artists = trackArtists,
                 AlbumArtists = albumArtists
             };
@@ -241,12 +296,9 @@ namespace MusicStrmExtract.Providers
 
             result.Item = item;
             result.HasMetadata = true;
-            if (!string.IsNullOrWhiteSpace(album.Title))
-            {
-                SyncAlbumField(info, album.Title, albumArtists);
-            }
+            SyncRepositoryItem(info, item);
 
-            _logger.Info($"[MusicStrmExtract] [LocalProvider] 专辑轨道定位: '{albumFolder}' 轨 {track.Number} '{track.Title}' recordingMBID={track.RecordingMbid}");
+            _logger.Info($"[MusicStrmExtract] [LocalProvider] 专辑轨道定位: '{albumFolder}' 碟 {media.Position} 轨 {track.Number} '{track.Title}' recordingMBID={track.RecordingMbid}");
             return true;
         }
 
@@ -254,7 +306,7 @@ namespace MusicStrmExtract.Providers
             string key,
             string albumFolder,
             string? artistFolder,
-            List<int> localTracks,
+            List<LocalDisc> localDiscs,
             PluginConfiguration config,
             CancellationToken ct)
         {
@@ -267,45 +319,49 @@ namespace MusicStrmExtract.Providers
             using var api = new MusicBrainzApi(
                 string.IsNullOrWhiteSpace(config.MusicBrainzBaseUrl) ? null : config.MusicBrainzBaseUrl);
             var search = new AlbumSearch(api);
-            var result = await search.SearchForTrackMapAsync(albumFolder, artistFolder, localTracks, ct).ConfigureAwait(false);
+            var result = await search.SearchForTrackMapAsync(albumFolder, artistFolder, localDiscs, ct).ConfigureAwait(false);
             PruneCache(AlbumCache);
             AlbumCache[key] = (DateTime.UtcNow, result);
             _logger.Info($"[MusicStrmExtract] [LocalProvider] 专辑定位: '{albumFolder}' -> " +
                 (result.Found
-                    ? $"'{result.Title}' releaseMBID={result.ReleaseMbid} 轨数={result.Tracks.Count}"
-                    : "无命中/轨号覆盖未通过"));
+                    ? $"'{result.Title}' releaseMBID={result.ReleaseMbid} 碟数={result.Medias.Count} 轨数={result.Medias.Sum(m => m.Tracks.Count)}"
+                    : "无命中/碟轨覆盖未通过"));
             return result;
         }
 
-        /// <summary>解析 strm 文件名数字前缀 → 轨号;无数字前缀时返回 0。</summary>
-        private static int ParseStrmFileName(string filePath)
+        private static string BuildAlbumCacheKey(string albumFolder, string? artistFolder, List<LocalDisc> localDiscs)
         {
-            var name = Path.GetFileName(filePath);
-            if (name.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
-            {
-                name = name.Substring(0, name.Length - ".strm".Length);
-            }
-
-            var m = StrmNumberRegex.Match(name);
-            if (!m.Success)
-            {
-                return 0;
-            }
-
-            if (m.Groups[1].Success
-                && int.TryParse(m.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var number))
-            {
-                return number;
-            }
-
-            return 0;
+            var layout = string.Join("|", localDiscs.Select(d =>
+                (d.DiscNumber?.ToString(CultureInfo.InvariantCulture) ?? "_")
+                + ":"
+                + string.Join("-", d.TrackNumbers)));
+            return $"{albumFolder}|{artistFolder}|{layout}";
         }
 
-        /// <summary>扫描专辑文件夹内全部 .strm,构建本地轨号集合(按轨号升序、去重,不读取文件名标题)。</summary>
-        private static List<int> ScanAlbumTracks(string albumDir)
+        /// <summary>扫描专辑目录上的 .strm(含 Disc N 子目录),构建本地碟组;每组内轨号去重。</summary>
+        private static List<LocalDisc> ScanAlbumDiscs(string albumDir)
         {
-            var tracks = new List<int>();
-            var seen = new HashSet<int>();
+            // 解析结果中碟号只会是 null 或正整数,用 0 作为无碟号的字典键。
+            var groups = new Dictionary<int, LocalDisc>();
+            var seen = new HashSet<(int Disc, int Track)>();
+
+            void AddTrack(int? disc, int number)
+            {
+                var key = disc ?? 0;
+                if (number <= 0 || !seen.Add((key, number)))
+                {
+                    return;
+                }
+
+                if (!groups.TryGetValue(key, out var group))
+                {
+                    group = new LocalDisc { DiscNumber = disc };
+                    groups.Add(key, group);
+                }
+
+                group.TrackNumbers.Add(number);
+            }
+
             try
             {
                 foreach (var f in Directory.EnumerateFiles(albumDir))
@@ -315,22 +371,48 @@ namespace MusicStrmExtract.Providers
                         continue;
                     }
 
-                    var number = ParseStrmFileName(f);
-                    if (number <= 0 || !seen.Add(number))
+                    var (disc, number) = StrmFileParser.ParseFileName(f);
+                    AddTrack(disc, number);
+                }
+
+                foreach (var sub in Directory.EnumerateDirectories(albumDir))
+                {
+                    var disc = StrmFileParser.ParseDiscFolderName(Path.GetFileName(sub));
+                    if (disc is null)
                     {
                         continue;
                     }
 
-                    tracks.Add(number);
+                    foreach (var f in Directory.EnumerateFiles(sub))
+                    {
+                        if (!f.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        var (_, number) = StrmFileParser.ParseFileName(f);
+                        AddTrack(disc, number);
+                    }
                 }
             }
             catch (Exception)
             {
-                return tracks;
+                // 目录读取失败时返回已收集到的碟组
             }
 
-            tracks.Sort();
-            return tracks;
+            var result = groups.Values.ToList();
+            result.Sort((a, b) =>
+            {
+                var an = a.DiscNumber ?? int.MaxValue;
+                var bn = b.DiscNumber ?? int.MaxValue;
+                return an.CompareTo(bn);
+            });
+            foreach (var g in result)
+            {
+                g.TrackNumbers.Sort();
+            }
+
+            return result;
         }
 
         private static void SetProviderId(Audio item, string key, string? value)
