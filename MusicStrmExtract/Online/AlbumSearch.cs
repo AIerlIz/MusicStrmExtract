@@ -156,9 +156,11 @@ namespace MusicStrmExtract.Online
                 .Take(MaxCandidateReleases)
                 .ToList();
 
-            // 逐个候选取 tracklist,用本地碟组布局校验 media 映射。
+            // 逐个候选取 tracklist,用本地碟组布局校验 media 映射;
+            // 轨数完全一致(每碟本地轨数 == release media 轨数)优先,避免普通版被豪华版/加歌版抢先选中。
             // 注意:release 详情取回的网络/解析异常向上抛,由调用方区分"MB 不可达(不缓存)"与"确认未命中";
             // 吞成 Found=false 会让暂时性故障被 30 分钟缓存锁死。
+            AlbumSearchResult? firstFallback = null;
             foreach (var best in ordered)
             {
                 var releaseMbid = GetString(best.Item, "id");
@@ -169,32 +171,66 @@ namespace MusicStrmExtract.Online
 
                 var releaseRoot = await _api.GetReleaseAsync(releaseMbid, ct).ConfigureAwait(false);
                 var medias = ParseReleaseMedias(releaseRoot);
-                if (medias.Count == 0 || MapLocalDiscsToMedias(localDiscs, medias) is null)
+                if (medias.Count == 0)
                 {
                     continue;
                 }
 
-                result.Found = true;
-                result.Title = best.Title;
-                result.Year = ParseYear(best.Date);
-                result.ReleaseMbid = releaseMbid;
-                result.ArtistName = best.Artists.FirstOrDefault();
-                var artistIds = GetArtistCreditIds(best.Item);
-                result.AlbumArtistMbid = artistIds.FirstOrDefault();
-                if (best.Item.TryGetProperty("release-group", out var rg))
+                var mapping = MapLocalDiscsToMedias(localDiscs, medias);
+                if (mapping is null)
                 {
-                    result.ReleaseGroupMbid = GetString(rg, "id");
+                    continue;
                 }
 
-                foreach (var media in medias)
+                if (HasExactTrackCount(localDiscs, mapping))
                 {
-                    result.Medias.Add(media);
+                    return BuildAlbumResult(best.Item, medias);
                 }
 
-                return result;
+                firstFallback ??= BuildAlbumResult(best.Item, medias);
+            }
+
+            return firstFallback ?? result;
+        }
+
+        private static AlbumSearchResult BuildAlbumResult(JsonElement releaseItem, List<ReleaseMedia> medias)
+        {
+            var result = new AlbumSearchResult
+            {
+                Found = true,
+                Title = GetString(releaseItem, "title"),
+                Year = ParseYear(GetString(releaseItem, "date")),
+                ReleaseMbid = GetString(releaseItem, "id"),
+                ArtistName = GetArtistCreditNames(releaseItem).FirstOrDefault(),
+                AlbumArtistMbid = GetArtistCreditIds(releaseItem).FirstOrDefault()
+            };
+            if (releaseItem.TryGetProperty("release-group", out var rg))
+            {
+                result.ReleaseGroupMbid = GetString(rg, "id");
+            }
+
+            foreach (var media in medias)
+            {
+                result.Medias.Add(media);
             }
 
             return result;
+        }
+
+        /// <summary>本地碟组与 release media 的轨数是否逐碟完全一致(用于优先标准版/普通版)。</summary>
+        public static bool HasExactTrackCount(
+            IReadOnlyList<LocalDisc> localDiscs,
+            IReadOnlyDictionary<LocalDisc, ReleaseMedia> mapping)
+        {
+            foreach (var pair in mapping)
+            {
+                if (pair.Key.TrackNumbers.Count != pair.Value.Tracks.Count)
+                {
+                    return false;
+                }
+            }
+
+            return localDiscs.Count > 0;
         }
 
         /// <summary>

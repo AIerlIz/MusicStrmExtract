@@ -207,6 +207,58 @@ namespace MusicStrmExtract.Tests
             Assert.Equal(2, map![local].Position);
         }
 
+        [Fact]
+        public void HasExactTrackCount_TrueWhenEveryMediaMatchesLocalCount()
+        {
+            var local = new LocalDisc();
+            local.TrackNumbers.AddRange(Enumerable.Range(1, 10));
+            var root = BuildRelease((1, Tracks(1, 10)));
+
+            var map = AlbumSearch.MapLocalDiscsToMedias(
+                new[] { local },
+                AlbumSearch.ParseReleaseMedias(root));
+
+            Assert.NotNull(map);
+            Assert.True(AlbumSearch.HasExactTrackCount(new[] { local }, map!));
+        }
+
+        [Fact]
+        public void HasExactTrackCount_FalseWhenMediaHasBonusTracks()
+        {
+            var local = new LocalDisc();
+            local.TrackNumbers.AddRange(Enumerable.Range(1, 10));
+            var bonusTracks = Tracks(1, 10)
+                .Concat(new[] { (11, "Bonus A"), (12, "Bonus B") })
+                .ToArray();
+            var root = BuildRelease((1, bonusTracks));
+
+            var map = AlbumSearch.MapLocalDiscsToMedias(
+                new[] { local },
+                AlbumSearch.ParseReleaseMedias(root));
+
+            Assert.NotNull(map);
+            Assert.False(AlbumSearch.HasExactTrackCount(new[] { local }, map!));
+        }
+
+        [Fact]
+        public void HasExactTrackCount_MatchesPerDiscForMultiDiscAlbums()
+        {
+            var disc1 = new LocalDisc();
+            disc1.TrackNumbers.AddRange(Enumerable.Range(1, 17));
+            var disc2 = new LocalDisc();
+            disc2.TrackNumbers.AddRange(Enumerable.Range(1, 13));
+            var root = BuildRelease(
+                (1, Tracks(1, 17)),
+                (2, Tracks(1, 13)));
+
+            var map = AlbumSearch.MapLocalDiscsToMedias(
+                new[] { disc1, disc2 },
+                AlbumSearch.ParseReleaseMedias(root));
+
+            Assert.NotNull(map);
+            Assert.True(AlbumSearch.HasExactTrackCount(new[] { disc1, disc2 }, map!));
+        }
+
         // ===== 测试数据构造 =====
 
         private static List<int> Local(int fromNumber, int count)
