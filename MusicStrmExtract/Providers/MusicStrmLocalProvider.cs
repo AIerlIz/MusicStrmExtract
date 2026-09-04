@@ -218,13 +218,13 @@ namespace MusicStrmExtract.Providers
             MetadataResult<Audio> result,
             CancellationToken ct)
         {
-            var (fileDisc, selfNumber) = StrmFileParser.ParseFileName(info.Path);
-            if (selfNumber <= 0)
+            var (fileDisc, rawTrackNumber, isCommentary) = StrmFileParser.ParseFileName(info.Path);
+            if (rawTrackNumber <= 0)
             {
                 return false; // 本文件无轨号,无法按轨取数
             }
 
-            var localDiscs = ScanAlbumDiscs(albumDir);
+            var (localDiscs, rawTracks) = ScanAlbumDiscs(albumDir);
             if (localDiscs.Count == 0)
             {
                 return false;
@@ -265,6 +265,19 @@ namespace MusicStrmExtract.Providers
                 return false;
             }
 
+            var rawRefs = rawTracks.TryGetValue(group.DiscNumber ?? 0, out var refs)
+                ? refs
+                : new List<(int Number, bool IsCommentary)>();
+            var selfNumber = StrmFileParser.MapCommentaryTrackNumber(
+                rawTrackNumber,
+                isCommentary,
+                rawRefs.Where(r => r.IsCommentary).Select(r => r.Number).ToArray(),
+                rawRefs.Where(r => !r.IsCommentary).Select(r => r.Number).ToArray());
+            if (selfNumber <= 0)
+            {
+                return false;
+            }
+
             var track = media.Tracks.FirstOrDefault(t => t.Number == selfNumber);
             if (track is null)
             {
@@ -277,9 +290,15 @@ namespace MusicStrmExtract.Providers
                 : Array.Empty<string>();
             var trackArtists = track.Artists.Count > 0 ? track.Artists.ToArray() : albumArtists;
 
+            var displayName = (track.Title ?? Path.GetFileNameWithoutExtension(info.Path)).Trim();
+            if (isCommentary)
+            {
+                displayName += " (Commentary)";
+            }
+
             var item = new Audio
             {
-                Name = (track.Title ?? Path.GetFileNameWithoutExtension(info.Path)).Trim(),
+                Name = displayName,
                 Album = album.Title,
                 ProductionYear = album.Year,
                 IndexNumber = track.Number,
@@ -338,28 +357,31 @@ namespace MusicStrmExtract.Providers
             return $"{albumFolder}|{artistFolder}|{layout}";
         }
 
-        /// <summary>扫描专辑目录上的 .strm(含 Disc N 子目录),构建本地碟组;每组内轨号去重。</summary>
-        private static List<LocalDisc> ScanAlbumDiscs(string albumDir)
+        /// <summary>
+        /// 扫描专辑目录上的 .strm(含 Disc N 子目录),构建本地碟组。
+        /// 评论轨与正式轨先按原始轨号收集,再做评论轨归一化,避免 1..26 交错轨号破坏 release 覆盖校验。
+        /// </summary>
+        private static (List<LocalDisc> Discs, Dictionary<int, List<(int Number, bool IsCommentary)>> RawTracks) ScanAlbumDiscs(string albumDir)
         {
             // 解析结果中碟号只会是 null 或正整数,用 0 作为无碟号的字典键。
-            var groups = new Dictionary<int, LocalDisc>();
-            var seen = new HashSet<(int Disc, int Track)>();
+            var rawGroups = new Dictionary<int, List<(int Number, bool IsCommentary)>>();
+            var seen = new HashSet<(int Disc, int Track, bool Commentary)>();
 
-            void AddTrack(int? disc, int number)
+            void AddTrack(int? disc, int number, bool isCommentary)
             {
                 var key = disc ?? 0;
-                if (number <= 0 || !seen.Add((key, number)))
+                if (number <= 0 || !seen.Add((key, number, isCommentary)))
                 {
                     return;
                 }
 
-                if (!groups.TryGetValue(key, out var group))
+                if (!rawGroups.TryGetValue(key, out var list))
                 {
-                    group = new LocalDisc { DiscNumber = disc };
-                    groups.Add(key, group);
+                    list = new List<(int Number, bool IsCommentary)>();
+                    rawGroups.Add(key, list);
                 }
 
-                group.TrackNumbers.Add(number);
+                list.Add((number, isCommentary));
             }
 
             try
@@ -371,8 +393,8 @@ namespace MusicStrmExtract.Providers
                         continue;
                     }
 
-                    var (disc, number) = StrmFileParser.ParseFileName(f);
-                    AddTrack(disc, number);
+                    var (disc, number, isCommentary) = StrmFileParser.ParseFileName(f);
+                    AddTrack(disc, number, isCommentary);
                 }
 
                 foreach (var sub in Directory.EnumerateDirectories(albumDir))
@@ -390,8 +412,8 @@ namespace MusicStrmExtract.Providers
                             continue;
                         }
 
-                        var (_, number) = StrmFileParser.ParseFileName(f);
-                        AddTrack(disc, number);
+                        var (_, number, isCommentary) = StrmFileParser.ParseFileName(f);
+                        AddTrack(disc, number, isCommentary);
                     }
                 }
             }
@@ -400,7 +422,20 @@ namespace MusicStrmExtract.Providers
                 // 目录读取失败时返回已收集到的碟组
             }
 
-            var result = groups.Values.ToList();
+            var result = new List<LocalDisc>();
+            foreach (var kv in rawGroups)
+            {
+                var raw = kv.Value;
+                var commentaryNumbers = raw.Where(r => r.IsCommentary).Select(r => r.Number).ToArray();
+                var regularNumbers = raw.Where(r => !r.IsCommentary).Select(r => r.Number).ToArray();
+                var group = new LocalDisc { DiscNumber = kv.Key == 0 ? null : kv.Key };
+                group.TrackNumbers.AddRange(raw
+                    .Select(r => StrmFileParser.MapCommentaryTrackNumber(r.Number, r.IsCommentary, commentaryNumbers, regularNumbers))
+                    .Where(n => n > 0)
+                    .Distinct());
+                result.Add(group);
+            }
+
             result.Sort((a, b) =>
             {
                 var an = a.DiscNumber ?? int.MaxValue;
@@ -412,7 +447,7 @@ namespace MusicStrmExtract.Providers
                 g.TrackNumbers.Sort();
             }
 
-            return result;
+            return (result, rawGroups);
         }
 
         private static void SetProviderId(Audio item, string key, string? value)
