@@ -14,5 +14,9 @@ namespace MusicStrmExtract
         [DisplayName("MusicBrainz 服务地址")]
         [Description("留空使用官方 https://musicbrainz.org；官方不稳定时可填写镜像，例如 https://musicbrainz.emby.tv。")]
         public string MusicBrainzBaseUrl { get; set; } = string.Empty;
+
+        [DisplayName("Cover Art Archive 服务地址")]
+        [Description("留空使用官方 https://coverartarchive.org/release/；网络受限时可填写镜像地址（需以 / 或 /release 结尾，兼容同一接口）。")]
+        public string CoverArtBaseUrl { get; set; } = string.Empty;
     }
 }

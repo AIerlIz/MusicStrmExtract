@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using static MusicStrmExtract.Online.JsonUtil;
 
 namespace MusicStrmExtract.Online
 {
@@ -12,6 +13,18 @@ namespace MusicStrmExtract.Online
     /// </summary>
     public static class ReleaseGroupScorer
     {
+        private const int OfficialStatusWeight = 40;
+        private const int PseudoReleaseWeight = -10;
+        private const int BootlegOrWithdrawnWeight = -40;
+        private const int BarcodePresentWeight = 30;
+        private const int BarcodeFrequencyPerOccurrence = 5;
+        private const int BarcodeFrequencyMax = 50;
+        private const int CompleteDateWeight = 10;
+        private const int CdFormatWeight = 8;
+        private const int JewelCaseWeight = 5;
+        private const int DisambiguationEmptyWeight = 5;
+        private const int PreferredCountryWeight = 500;
+
         /// <summary>
         /// 对同 RG 下所有 release 评分并排序，返回 (release JSON, score) 列表。
         /// 主排序：总分降序；次级：本地年份与 release date 年份就近（差值绝对值小者优先）。
@@ -165,22 +178,22 @@ namespace MusicStrmExtract.Online
             var status = GetString(release, "status");
             switch (status)
             {
-                case "Official": score += 40; break;
-                case "Pseudo-Release": score -= 10; break;
+                case "Official": score += OfficialStatusWeight; break;
+                case "Pseudo-Release": score += PseudoReleaseWeight; break;
                 case "Bootleg":
                 case "Withdrawn":
-                    score -= 40; break;
+                    score += BootlegOrWithdrawnWeight; break;
             }
 
             // Barcode 存在 +30
             var barcode = GetString(release, "barcode");
             if (!string.IsNullOrWhiteSpace(barcode))
             {
-                score += 30;
+                score += BarcodePresentWeight;
                 // 频次加分 +5/次，上限 +50
                 if (barcodeCounts.TryGetValue(barcode, out var count))
                 {
-                    score += Math.Min(count * 5, 50);
+                    score += Math.Min(count * BarcodeFrequencyPerOccurrence, BarcodeFrequencyMax);
                 }
             }
 
@@ -188,27 +201,27 @@ namespace MusicStrmExtract.Online
             var date = GetString(release, "date");
             if (!string.IsNullOrWhiteSpace(date) && IsCompleteDate(date))
             {
-                score += 10;
+                score += CompleteDateWeight;
             }
 
             // Format = CD +8（MB release-group 响应中字段名为 media，非 medium-list）
             if (IsCdFormat(release))
             {
-                score += 8;
+                score += CdFormatWeight;
             }
 
             // Packaging = Jewel Case +5
             var packaging = GetString(release, "packaging");
             if (string.Equals(packaging, "Jewel Case", StringComparison.OrdinalIgnoreCase))
             {
-                score += 5;
+                score += JewelCaseWeight;
             }
 
             // Disambiguation 为空 +5
             var disambig = GetString(release, "disambiguation");
             if (string.IsNullOrWhiteSpace(disambig))
             {
-                score += 5;
+                score += DisambiguationEmptyWeight;
             }
 
             // 国家偏好:命中偏好国家,加一个大权重顶到并列前列(是否真正选中仍受精确轨数硬校验约束)
@@ -217,7 +230,7 @@ namespace MusicStrmExtract.Online
                 var country = GetString(release, "country");
                 if (string.Equals(country, preferredCountry, StringComparison.OrdinalIgnoreCase))
                 {
-                    score += 500;
+                    score += PreferredCountryWeight;
                 }
             }
 
@@ -250,33 +263,5 @@ namespace MusicStrmExtract.Online
             return m.Success ? int.Parse(m.Value, System.Globalization.CultureInfo.InvariantCulture) : null;
         }
 
-        private static string? GetString(JsonElement element, string property)
-        {
-            if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value)
-                && value.ValueKind == JsonValueKind.String)
-            {
-                return value.GetString();
-            }
-            return null;
-        }
-
-        private static int GetInt(JsonElement element, string property)
-        {
-            if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value))
-            {
-                if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number))
-                {
-                    return number;
-                }
-
-                if (value.ValueKind == JsonValueKind.String
-                    && int.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
-                {
-                    return parsed;
-                }
-            }
-
-            return 0;
-        }
     }
 }

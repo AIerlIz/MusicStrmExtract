@@ -337,7 +337,7 @@ namespace MusicStrmExtract.Providers
 
             using var api = new MusicBrainzApi(
                 string.IsNullOrWhiteSpace(config.MusicBrainzBaseUrl) ? null : config.MusicBrainzBaseUrl);
-            var search = new AlbumSearch(api);
+            var search = new AlbumSearch(api, config.CoverArtBaseUrl);
             var result = await search.SearchForTrackMapAsync(albumFolder, artistFolder, localDiscs, ct).ConfigureAwait(false);
             PruneCache(AlbumCache);
             AlbumCache[key] = (DateTime.UtcNow, result);

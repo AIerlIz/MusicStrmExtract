@@ -35,7 +35,7 @@ namespace MusicStrmExtract.Providers
             _logger = logManager.GetLogger("MusicStrmExtract");
             _logger.Info("[MusicStrmExtract] [RemoteProvider] 构造函数被调用(已注册)");
             _http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
-            _http.DefaultRequestHeaders.UserAgent.ParseAdd("MusicStrmExtract/1.0.0.0 (Emby plugin; contact: local)");
+            _http.DefaultRequestHeaders.UserAgent.ParseAdd(PluginConstants.UserAgent);
         }
 
         public void Dispose()

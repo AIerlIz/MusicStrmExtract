@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using static MusicStrmExtract.Online.JsonUtil;
 
 namespace MusicStrmExtract.Online
 {
@@ -78,20 +79,24 @@ namespace MusicStrmExtract.Online
         public const int MaxCandidateReleases = 5;
 
         private readonly MusicBrainzApi _api;
+        private readonly string _coverArtBaseUrl;
 
-        private const string CoverArtBaseUrl = "https://coverartarchive.org/release/";
+        private const string DefaultCoverArtBaseUrl = "https://coverartarchive.org/release/";
 
         private static readonly HttpClient CoverArtHttp = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
 
         static AlbumSearch()
         {
-            CoverArtHttp.DefaultRequestHeaders.UserAgent.ParseAdd("MusicStrmExtract/1.3.0.0 (Emby plugin; contact: local)");
+            CoverArtHttp.DefaultRequestHeaders.UserAgent.ParseAdd(PluginConstants.UserAgent);
             CoverArtHttp.Timeout = TimeSpan.FromSeconds(15);
         }
 
-        public AlbumSearch(MusicBrainzApi api)
+        public AlbumSearch(MusicBrainzApi api, string? coverArtBaseUrl = null)
         {
             _api = api;
+            _coverArtBaseUrl = string.IsNullOrWhiteSpace(coverArtBaseUrl)
+                ? DefaultCoverArtBaseUrl
+                : coverArtBaseUrl.TrimEnd('/') + "/";
         }
 
         /// <summary>去除专辑名中的年份/附加括号等,得到核心名:"叶惠美 (2003)"→"叶惠美","七里香-2004"→"七里香"。</summary>
@@ -298,7 +303,7 @@ namespace MusicStrmExtract.Online
         }
 
         /// <summary>在顶级分数档的精确命中候选中,用 Cover Art Archive 封面数打破残余并列;单候选直接返回。</summary>
-        private static async Task<AlbumSearchResult> PickExactByCoverAsync(
+        private async Task<AlbumSearchResult> PickExactByCoverAsync(
             List<(JsonElement Release, JsonElement ReleaseRoot, List<ReleaseMedia> Medias, int Score)> candidates,
             CancellationToken ct)
         {
@@ -325,11 +330,11 @@ namespace MusicStrmExtract.Online
         }
 
         /// <summary>查询 Cover Art Archive 该 release 的封面分(有正面+图数)。CAA 不可达/异常按 0 处理。</summary>
-        private static async Task<int> CountCoverArtAsync(string releaseMbid, CancellationToken ct)
+        private async Task<int> CountCoverArtAsync(string releaseMbid, CancellationToken ct)
         {
             try
             {
-                var url = $"{CoverArtBaseUrl}{Uri.EscapeDataString(releaseMbid)}";
+                var url = $"{_coverArtBaseUrl}{Uri.EscapeDataString(releaseMbid)}";
                 using var resp = await CoverArtHttp.GetAsync(url, ct).ConfigureAwait(false);
                 if (!resp.IsSuccessStatusCode)
                 {
@@ -628,47 +633,6 @@ namespace MusicStrmExtract.Online
                 .ToList();
         }
 
-
-        private static string? GetString(JsonElement element, string property)
-        {
-            if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value)
-                && value.ValueKind == JsonValueKind.String)
-            {
-                return value.GetString();
-            }
-
-            return null;
-        }
-
-        private static int GetInt(JsonElement element, string property)
-        {
-            if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value))
-            {
-                if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number))
-                {
-                    return number;
-                }
-
-                if (value.ValueKind == JsonValueKind.String
-                    && int.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
-                {
-                    return parsed;
-                }
-            }
-
-            return 0;
-        }
-
-        private static int? ParseYear(string? date)
-        {
-            if (string.IsNullOrWhiteSpace(date))
-            {
-                return null;
-            }
-
-            var m = Regex.Match(date, @"\b(1[89]\d{2}|20\d{2})\b");
-            return m.Success ? int.Parse(m.Value, CultureInfo.InvariantCulture) : null;
-        }
 
         /// <summary>
         /// 按 barcode 精确搜索 release,并校验本地碟组布局。

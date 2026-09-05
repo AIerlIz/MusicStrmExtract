@@ -11,7 +11,6 @@ namespace MusicStrmExtract.Online
     public sealed class MusicBrainzApi : IDisposable
     {
         private const string DefaultBaseUrl = "https://musicbrainz.org";
-        private const string UserAgent = "MusicStrmExtract/1.0.0.0 (Emby plugin; contact: local)";
 
         private static readonly SemaphoreSlim Gate = new SemaphoreSlim(1, 1);
         private static DateTime _lastRequestUtc = DateTime.MinValue;
@@ -25,7 +24,7 @@ namespace MusicStrmExtract.Online
             _baseUrl = (baseUrl ?? DefaultBaseUrl).TrimEnd('/');
             _http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
             _http.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
-            _http.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+            _http.DefaultRequestHeaders.UserAgent.ParseAdd(PluginConstants.UserAgent);
         }
 
         public async Task<JsonElement> GetRecordingAsync(string recordingMbid, CancellationToken ct)

@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 
 using MusicStrmExtract.Metadata;
+using static MusicStrmExtract.Online.JsonUtil;
 
 namespace MusicStrmExtract.Online
 {
@@ -342,47 +343,6 @@ namespace MusicStrmExtract.Online
             }
 
             return list.Count > 0 ? list[0] : (JsonElement?)null;
-        }
-
-        private static string? GetString(JsonElement element, string property)
-        {
-            if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value)
-                && value.ValueKind == JsonValueKind.String)
-            {
-                return value.GetString();
-            }
-
-            return null;
-        }
-
-        private static int GetInt(JsonElement element, string property)
-        {
-            if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value))
-            {
-                if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number))
-                {
-                    return number;
-                }
-
-                if (value.ValueKind == JsonValueKind.String
-                    && int.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
-                {
-                    return parsed;
-                }
-            }
-
-            return 0;
-        }
-
-        private static int? ParseYear(string? date)
-        {
-            if (string.IsNullOrWhiteSpace(date))
-            {
-                return null;
-            }
-
-            var m = System.Text.RegularExpressions.Regex.Match(date, @"\b(1[89]\d{2}|20\d{2})\b");
-            return m.Success ? int.Parse(m.Value, CultureInfo.InvariantCulture) : null;
         }
 
         public void Dispose()
