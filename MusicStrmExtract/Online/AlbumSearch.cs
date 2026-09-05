@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Net.Http;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -77,6 +78,16 @@ namespace MusicStrmExtract.Online
         public const int MaxCandidateReleases = 5;
 
         private readonly MusicBrainzApi _api;
+
+        private const string CoverArtBaseUrl = "https://coverartarchive.org/release/";
+
+        private static readonly HttpClient CoverArtHttp = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
+
+        static AlbumSearch()
+        {
+            CoverArtHttp.DefaultRequestHeaders.UserAgent.ParseAdd("MusicStrmExtract/1.3.0.0 (Emby plugin; contact: local)");
+            CoverArtHttp.Timeout = TimeSpan.FromSeconds(15);
+        }
 
         public AlbumSearch(MusicBrainzApi api)
         {
@@ -177,7 +188,11 @@ namespace MusicStrmExtract.Online
                         // 从 RG 全量候选推断偏好国家(比搜索样本更准),并传给评分
                         var rgPreferredCountry = ReleaseGroupScorer.InferPreferredCountry(rgReleases.EnumerateArray(), localDiscs);
                         var ranked = ReleaseGroupScorer.ScoreAll(rgReleases, localYear, rgPreferredCountry);
-                        foreach (var (release, _) in ranked)
+
+                        // 只收集"顶级分数档"且精确轨数命中的候选,再用封面数(CAA)打破残余并列;
+                        // 顶级分数档之外的命中不可能靠封面数胜出,无需继续收集(有界 CAA 请求)。
+                        var exactCandidates = new List<(JsonElement Release, JsonElement ReleaseRoot, List<ReleaseMedia> Medias, int Score)>();
+                        foreach (var (release, score) in ranked)
                         {
                             var releaseMbid = GetString(release, "id");
                             if (string.IsNullOrWhiteSpace(releaseMbid)) continue;
@@ -187,8 +202,26 @@ namespace MusicStrmExtract.Online
                             var mapping = MapLocalDiscsToMedias(localDiscs, medias);
                             if (mapping is null) continue;
                             if (HasExactTrackCount(localDiscs, mapping))
-                                return BuildAlbumResult(releaseRoot, medias);
-                            firstFallback ??= BuildAlbumResult(releaseRoot, medias);
+                            {
+                                if (exactCandidates.Count == 0 || score == exactCandidates[0].Score)
+                                {
+                                    exactCandidates.Add((release, releaseRoot, medias, score));
+                                }
+                                else
+                                {
+                                    // 已低于顶级分数档,后续不可能靠封面数胜出
+                                    break;
+                                }
+                            }
+                            else
+                            {
+                                firstFallback ??= BuildAlbumResult(releaseRoot, medias);
+                            }
+                        }
+
+                        if (exactCandidates.Count > 0)
+                        {
+                            return await PickExactByCoverAsync(exactCandidates, ct).ConfigureAwait(false);
                         }
 
                         // RG 路径无任何布局命中时,继续走下方 top-10 循环(可能含其它 RG 的 release)
@@ -262,6 +295,78 @@ namespace MusicStrmExtract.Online
             }
 
             return result;
+        }
+
+        /// <summary>在顶级分数档的精确命中候选中,用 Cover Art Archive 封面数打破残余并列;单候选直接返回。</summary>
+        private static async Task<AlbumSearchResult> PickExactByCoverAsync(
+            List<(JsonElement Release, JsonElement ReleaseRoot, List<ReleaseMedia> Medias, int Score)> candidates,
+            CancellationToken ct)
+        {
+            if (candidates.Count == 1)
+            {
+                return BuildAlbumResult(candidates[0].ReleaseRoot, candidates[0].Medias);
+            }
+
+            AlbumSearchResult? best = null;
+            var bestCover = -1;
+            foreach (var (_, releaseRoot, medias, _) in candidates)
+            {
+                var mbid = GetString(releaseRoot, "id");
+                var cover = string.IsNullOrWhiteSpace(mbid) ? 0 : await CountCoverArtAsync(mbid, ct).ConfigureAwait(false);
+                var built = BuildAlbumResult(releaseRoot, medias);
+                if (best is null || cover > bestCover)
+                {
+                    best = built;
+                    bestCover = cover;
+                }
+            }
+
+            return best!;
+        }
+
+        /// <summary>查询 Cover Art Archive 该 release 的封面分(有正面+图数)。CAA 不可达/异常按 0 处理。</summary>
+        private static async Task<int> CountCoverArtAsync(string releaseMbid, CancellationToken ct)
+        {
+            try
+            {
+                var url = $"{CoverArtBaseUrl}{Uri.EscapeDataString(releaseMbid)}";
+                using var resp = await CoverArtHttp.GetAsync(url, ct).ConfigureAwait(false);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    return 0;
+                }
+
+                var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                using var doc = JsonDocument.Parse(body);
+                return ParseCoverArtCount(doc.RootElement);
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        /// <summary>从 Cover Art Archive release 响应的根节点解析封面分:有正面 +10000,再加图数。</summary>
+        public static int ParseCoverArtCount(JsonElement root)
+        {
+            if (root.TryGetProperty("images", out var images) && images.ValueKind == JsonValueKind.Array)
+            {
+                var count = 0;
+                var front = false;
+                foreach (var img in images.EnumerateArray())
+                {
+                    if (img.TryGetProperty("front", out var f) && f.ValueKind == JsonValueKind.True)
+                    {
+                        front = true;
+                    }
+
+                    count++;
+                }
+
+                return (front ? 10000 : 0) + count;
+            }
+
+            return 0;
         }
 
         /// <summary>本地碟组与 release media 的轨数是否逐碟完全一致(用于优先标准版/普通版)。</summary>
