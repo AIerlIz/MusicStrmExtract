@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -16,7 +18,8 @@ namespace MusicStrmExtract.Online
         /// </summary>
         /// <param name="allReleases">release-group 响应中的 releases JSON 数组。</param>
         /// <param name="localYear">本地目录名解析出的年份（如 "七里香 (2004)" → 2004）；null 表示无年份，跳过就近排序。</param>
-        public static List<(JsonElement Item, int Score)> ScoreAll(JsonElement allReleases, int? localYear = null)
+        /// <param name="preferredCountry">自动推断出的偏好国家（ISO 3166-1 alpha-2）；null 表示不启用国家加权。</param>
+        public static List<(JsonElement Item, int Score)> ScoreAll(JsonElement allReleases, int? localYear = null, string? preferredCountry = null)
         {
             var result = new List<(JsonElement Item, int Score)>();
             var barcodeCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -33,7 +36,7 @@ namespace MusicStrmExtract.Online
 
             foreach (var r in allReleases.EnumerateArray())
             {
-                var score = ScoreRelease(r, barcodeCounts);
+                var score = ScoreRelease(r, barcodeCounts, preferredCountry);
                 result.Add((r, score));
             }
 
@@ -69,7 +72,92 @@ namespace MusicStrmExtract.Online
             return result;
         }
 
-        private static int ScoreRelease(JsonElement release, Dictionary<string, int> barcodeCounts)
+        /// <summary>
+        /// 自动推断一个无感的国家偏好:在"官方 + 有 barcode + 碟布局与本地一致"的候选里,
+        /// 取出现次数最多的国家(mode);次数打平时,取"该国基础分最高"的国家;再打平按国名稳定。
+        /// 没有任何可匹配候选时返回 null(不启用加权,保持原行为)。
+        /// </summary>
+        public static string? InferPreferredCountry(IEnumerable<JsonElement> releases, IReadOnlyList<LocalDisc> localDiscs)
+        {
+            if (releases is null || localDiscs is null || localDiscs.Count == 0)
+            {
+                return null;
+            }
+
+            var list = releases.Where(r => r.ValueKind == JsonValueKind.Object).ToList();
+            if (list.Count == 0)
+            {
+                return null;
+            }
+
+            var barcodeCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var r in list)
+            {
+                var bc = GetString(r, "barcode");
+                if (!string.IsNullOrWhiteSpace(bc))
+                {
+                    if (!barcodeCounts.TryGetValue(bc, out var c)) barcodeCounts[bc] = 0;
+                    barcodeCounts[bc] = c + 1;
+                }
+            }
+
+            // 只统计"官方实体版"且碟布局与本地一致的候选,避免被 Withdrawn/数字版带偏
+            var compatible = list
+                .Where(r => string.Equals(GetString(r, "status"), "Official", StringComparison.OrdinalIgnoreCase)
+                            && !string.IsNullOrWhiteSpace(GetString(r, "barcode"))
+                            && LayoutMatchesLocal(r, localDiscs))
+                .ToList();
+            if (compatible.Count == 0)
+            {
+                return null;
+            }
+
+            return compatible
+                .GroupBy(r => GetString(r, "country") ?? string.Empty)
+                .Where(g => !string.IsNullOrWhiteSpace(g.Key))
+                .Select(g => new
+                {
+                    Country = g.Key,
+                    Count = g.Count(),
+                    MaxBase = g.Max(r => ScoreRelease(r, barcodeCounts))
+                })
+                .OrderByDescending(g => g.Count)
+                .ThenByDescending(g => g.MaxBase)
+                .ThenBy(g => g.Country, StringComparer.Ordinal)
+                .Select(g => g.Country)
+                .FirstOrDefault();
+        }
+
+        /// <summary>release 的 media 布局是否与本地碟组完全一致(逐碟 track-count 相等)。</summary>
+        private static bool LayoutMatchesLocal(JsonElement release, IReadOnlyList<LocalDisc> localDiscs)
+        {
+            if (!release.TryGetProperty("media", out var mediaArr) || mediaArr.ValueKind != JsonValueKind.Array)
+            {
+                return false;
+            }
+
+            var medias = mediaArr.EnumerateArray().ToList();
+            if (medias.Count != localDiscs.Count)
+            {
+                return false;
+            }
+
+            // 按 media.position 与本地碟(DiscNumber/轨数)排序后逐碟比对
+            var sortedMedia = medias.OrderBy(m => GetInt(m, "position")).ToList();
+            var sortedLocal = localDiscs.OrderBy(d => d.DiscNumber ?? int.MaxValue).ToList();
+            for (var i = 0; i < sortedLocal.Count; i++)
+            {
+                var tc = GetInt(sortedMedia[i], "track-count");
+                if (tc <= 0 || tc != sortedLocal[i].TrackNumbers.Count)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static int ScoreRelease(JsonElement release, Dictionary<string, int> barcodeCounts, string? preferredCountry = null)
         {
             int score = 0;
 
@@ -123,6 +211,16 @@ namespace MusicStrmExtract.Online
                 score += 5;
             }
 
+            // 国家偏好:命中偏好国家,加一个大权重顶到并列前列(是否真正选中仍受精确轨数硬校验约束)
+            if (!string.IsNullOrWhiteSpace(preferredCountry))
+            {
+                var country = GetString(release, "country");
+                if (string.Equals(country, preferredCountry, StringComparison.OrdinalIgnoreCase))
+                {
+                    score += 500;
+                }
+            }
+
             return score;
         }
 
@@ -160,6 +258,25 @@ namespace MusicStrmExtract.Online
                 return value.GetString();
             }
             return null;
+        }
+
+        private static int GetInt(JsonElement element, string property)
+        {
+            if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value))
+            {
+                if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number))
+                {
+                    return number;
+                }
+
+                if (value.ValueKind == JsonValueKind.String
+                    && int.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    return parsed;
+                }
+            }
+
+            return 0;
         }
     }
 }

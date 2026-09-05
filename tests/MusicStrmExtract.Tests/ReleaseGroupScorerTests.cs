@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json;
 
 using MusicStrmExtract.Online;
@@ -28,9 +29,9 @@ namespace MusicStrmExtract.Tests
                 else sb.Append(",\"date\":null");
                 if (!string.IsNullOrEmpty(disambig)) sb.Append($",\"disambiguation\":\"{disambig}\"");
                 else sb.Append(",\"disambiguation\":null");
-                // media(MB 字段名,非 medium-list)
+                // media(MB 字段名,非 medium-list);给 CD 版带 track-count 供布局匹配
                 sb.Append(",\"media\":[");
-                if (hasCDDisc) sb.Append("{\"format\":\"CD\"}");
+                if (hasCDDisc) sb.Append("{\"format\":\"CD\",\"track-count\":13}");
                 sb.Append(']');
                 sb.Append('}');
             }
@@ -170,6 +171,63 @@ namespace MusicStrmExtract.Tests
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg, localYear: null);
             Assert.Equal("a", scored[0].Item.GetProperty("id").GetString());
+        }
+
+        [Fact]
+        public void InferPreferredCountry_ChoosesMostCommonCountry()
+        {
+            // US 出现 2 次最多,应被选为默认偏好国家
+            var rg = BuildRgJson(
+                ("us1", "Official", "ABC", "US", "2014-10-27", true, null),
+                ("us2", "Official", "ABC", "US", "2014-10-27", true, null),
+                ("jp1", "Official", "ABC", "JP", "2014-10-27", true, null),
+                ("cl1", "Official", "ABC", "CL", "2014-10-27", true, null)
+            );
+            var local = new LocalDisc();
+            local.TrackNumbers.AddRange(Enumerable.Range(1, 13));
+            Assert.Equal("US", ReleaseGroupScorer.InferPreferredCountry(rg.EnumerateArray(), new[] { local }));
+        }
+
+        [Fact]
+        public void InferPreferredCountry_IgnoresWithdrawnAndNoBarcode()
+        {
+            // CA 有 3 个候选,但都是 Withdrawn/无 barcode,应被排除;US 才是多数
+            var rg = BuildRgJson(
+                ("wd1", "Withdrawn", "XYZ", "CA", "2014-10-27", true, null),
+                ("wd2", "Withdrawn", "XYZ", "CA", "2014-10-27", true, null),
+                ("nb1", "Official", null, "CA", "2014-10-27", true, null),
+                ("us1", "Official", "ABC", "US", "2014-10-27", true, null),
+                ("us2", "Official", "ABC", "US", "2014-10-27", true, null)
+            );
+            var local = new LocalDisc();
+            local.TrackNumbers.AddRange(Enumerable.Range(1, 13));
+            Assert.Equal("US", ReleaseGroupScorer.InferPreferredCountry(rg.EnumerateArray(), new[] { local }));
+        }
+
+        [Fact]
+        public void ScoreAll_PreferredCountry_BreaksTie()
+        {
+            // US/AR/CL 同分;指定偏好 US 后,US 应排到第一
+            var rg = BuildRgJson(
+                ("us", "Official", "602547071668", "US", "2014-10-27", true, null),
+                ("ar", "Official", "602547071668", "AR", "2014-10-27", true, null),
+                ("cl", "Official", "602547071668", "CL", "2014-10-27", true, null)
+            );
+            var withUs = ReleaseGroupScorer.ScoreAll(rg, preferredCountry: "US");
+            Assert.Equal("us", withUs[0].Item.GetProperty("id").GetString());
+            Assert.True(withUs[0].Score > withUs[1].Score);
+        }
+
+        [Fact]
+        public void InferPreferredCountry_ReturnsNull_WhenNoCompatible()
+        {
+            // 唯一候选无 barcode,不应产生偏好国家
+            var rg = BuildRgJson(
+                ("a", "Official", null, "US", "2014-10-27", true, null)
+            );
+            var local = new LocalDisc();
+            local.TrackNumbers.AddRange(Enumerable.Range(1, 13));
+            Assert.Null(ReleaseGroupScorer.InferPreferredCountry(rg.EnumerateArray(), new[] { local }));
         }
     }
 }

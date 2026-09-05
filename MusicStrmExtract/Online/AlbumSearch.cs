@@ -143,6 +143,9 @@ namespace MusicStrmExtract.Online
                 return result;
             }
 
+            // 无感国家偏好:从搜索候选推断多数国家,用于 top-10 排序时的 tie-break
+            var preferredCountry = ReleaseGroupScorer.InferPreferredCountry(scored.Select(x => x.Item), localDiscs);
+
             // 本地目录文本已作为查询条件交给 MB,不再做字形过滤;稳定排序只按 MB 元数据:
             // status(Official 0 < Pseudo-Release 3) -> 主类型 Album -> 完整日期优先 -> 日期最早
             // (空日期排最后)-> score 降序 -> 官方名(字典序)
@@ -151,6 +154,7 @@ namespace MusicStrmExtract.Online
                 .ThenBy(x => string.Equals(x.PrimaryType, "Album", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
                 .ThenBy(x => IsIncompleteDate(x.Date) ? 1 : 0)
                 .ThenBy(x => string.IsNullOrWhiteSpace(x.Date) ? "9999" : x.Date!)
+                .ThenBy(x => string.Equals(GetString(x.Item, "country"), preferredCountry, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
                 .ThenByDescending(x => x.Score)
                 .ThenBy(x => x.Title, StringComparer.Ordinal)
                 .Take(MaxCandidateReleases)
@@ -170,7 +174,9 @@ namespace MusicStrmExtract.Online
                     if (rgRoot.TryGetProperty("releases", out var rgReleases) && rgReleases.GetArrayLength() > 1)
                     {
                         var localYear = ParseYear(albumFolderName);
-                        var ranked = ReleaseGroupScorer.ScoreAll(rgReleases, localYear);
+                        // 从 RG 全量候选推断偏好国家(比搜索样本更准),并传给评分
+                        var rgPreferredCountry = ReleaseGroupScorer.InferPreferredCountry(rgReleases.EnumerateArray(), localDiscs);
+                        var ranked = ReleaseGroupScorer.ScoreAll(rgReleases, localYear, rgPreferredCountry);
                         foreach (var (release, _) in ranked)
                         {
                             var releaseMbid = GetString(release, "id");
