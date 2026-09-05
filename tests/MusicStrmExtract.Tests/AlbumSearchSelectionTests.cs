@@ -21,11 +21,11 @@ namespace MusicStrmExtract.Tests
             var api = new FakeMusicBrainzApi
             {
                 SearchJson = SearchReleases("rg-1"),
-                RgJson = RgReleases(("us1", "US", "AAA"), ("us2", "US", "BBB"), ("ar1", "AR", "CCC"))
+                RgJson = RgReleases(("us1", "US", "AAA", "2014-10-27"), ("us2", "US", "BBB", "2014-10-27"), ("ar1", "AR", "CCC", "2014-10-27"))
             };
-            api.ReleaseDetails["us1"] = ReleaseDetail("us1", "1989", "US", 13);
-            api.ReleaseDetails["us2"] = ReleaseDetail("us2", "1989", "US", 13);
-            api.ReleaseDetails["ar1"] = ReleaseDetail("ar1", "1989", "AR", 13);
+            api.ReleaseDetails["us1"] = ReleaseDetail("us1", "1989", "US", 13, "2014-10-27");
+            api.ReleaseDetails["us2"] = ReleaseDetail("us2", "1989", "US", 13, "2014-10-27");
+            api.ReleaseDetails["ar1"] = ReleaseDetail("ar1", "1989", "AR", 13, "2014-10-27");
 
             var result = await RunAsync(api, new FakeCoverArtClient());
 
@@ -40,10 +40,10 @@ namespace MusicStrmExtract.Tests
             var api = new FakeMusicBrainzApi
             {
                 SearchJson = SearchReleases("rg-1"),
-                RgJson = RgReleases(("usA", "US", "AAA"), ("usB", "US", "AAA"))
+                RgJson = RgReleases(("usA", "US", "AAA", "2014-10-27"), ("usB", "US", "AAA", "2014-10-27"))
             };
-            api.ReleaseDetails["usA"] = ReleaseDetail("usA", "1989", "US", 13);
-            api.ReleaseDetails["usB"] = ReleaseDetail("usB", "1989", "US", 13);
+            api.ReleaseDetails["usA"] = ReleaseDetail("usA", "1989", "US", 13, "2014-10-27");
+            api.ReleaseDetails["usB"] = ReleaseDetail("usB", "1989", "US", 13, "2014-10-27");
 
             var cover = new FakeCoverArtClient();
             cover.Counts["usA"] = 10009; // 有正面 + 9 图
@@ -53,6 +53,28 @@ namespace MusicStrmExtract.Tests
 
             Assert.True(result.Found);
             Assert.Equal("usA", result.ReleaseMbid);
+        }
+
+        [Fact]
+        public async Task SearchForTrackMapAsync_KeepsPreferredYear_WhenSameScore()
+        {
+            // 同国、同分、但年份不同:CAA 不应覆盖"年份就近 → 原版优先"的排序意图
+            var api = new FakeMusicBrainzApi
+            {
+                SearchJson = SearchReleases("rg-1"),
+                RgJson = RgReleases(("orig", "US", "AAA", "2014-08-03"), ("reissue", "US", "AAA", "2018-06-15"))
+            };
+            api.ReleaseDetails["orig"] = ReleaseDetail("orig", "1989", "US", 13, "2014-08-03");
+            api.ReleaseDetails["reissue"] = ReleaseDetail("reissue", "1989", "US", 13, "2018-06-15");
+
+            var cover = new FakeCoverArtClient();
+            cover.Counts["orig"] = 2;        // 原版封面更少
+            cover.Counts["reissue"] = 10009; // 重版封面更多
+
+            var result = await RunAsync(api, cover);
+
+            Assert.True(result.Found);
+            Assert.Equal("orig", result.ReleaseMbid);
         }
 
         private static async Task<AlbumSearchResult> RunAsync(FakeMusicBrainzApi api, FakeCoverArtClient cover)
@@ -68,21 +90,21 @@ namespace MusicStrmExtract.Tests
             return $"{{\"releases\":[{{\"id\":\"sr-1\",\"score\":100,\"title\":\"1989\",\"date\":\"2014-10-27\",\"status\":\"Official\",\"country\":\"US\",\"release-group\":{{\"id\":\"{rgId}\"}}}}]}}";
         }
 
-        private static string RgReleases(params (string Id, string Country, string Barcode)[] releases)
+        private static string RgReleases(params (string Id, string Country, string Barcode, string Date)[] releases)
         {
             var sb = new System.Text.StringBuilder("{\"releases\":[");
             for (var i = 0; i < releases.Length; i++)
             {
                 if (i > 0) sb.Append(',');
-                var (id, country, barcode) = releases[i];
-                sb.Append($"{{\"id\":\"{id}\",\"title\":\"1989\",\"date\":\"2014-10-27\",\"status\":\"Official\",\"country\":\"{country}\",\"barcode\":\"{barcode}\",\"disambiguation\":null,\"packaging\":\"Jewel Case\",\"media\":[{{\"format\":\"CD\",\"track-count\":13}}]}}");
+                var (id, country, barcode, date) = releases[i];
+                sb.Append($"{{\"id\":\"{id}\",\"title\":\"1989\",\"date\":\"{date}\",\"status\":\"Official\",\"country\":\"{country}\",\"barcode\":\"{barcode}\",\"disambiguation\":null,\"packaging\":\"Jewel Case\",\"media\":[{{\"format\":\"CD\",\"track-count\":13}}]}}");
             }
 
             sb.Append("]}");
             return sb.ToString();
         }
 
-        private static string ReleaseDetail(string id, string title, string country, int trackCount)
+        private static string ReleaseDetail(string id, string title, string country, int trackCount, string date = "2014-10-27")
         {
             var tracks = new System.Text.StringBuilder();
             for (var n = 1; n <= trackCount; n++)
@@ -91,7 +113,7 @@ namespace MusicStrmExtract.Tests
                 tracks.Append($"{{\"number\":\"{n}\",\"title\":\"{title} {n}\",\"recording\":{{\"id\":\"rec-{id}-{n}\",\"title\":\"{title} {n}\",\"artist-credit\":[{{\"artist\":{{\"id\":\"art-1\",\"name\":\"Artist\"}}}}]}}}}");
             }
 
-            return $"{{\"id\":\"{id}\",\"title\":\"{title}\",\"date\":\"2014-10-27\",\"country\":\"{country}\",\"status\":\"Official\",\"media\":[{{\"position\":1,\"track-count\":{trackCount},\"tracks\":[{tracks}]}}]}}";
+            return $"{{\"id\":\"{id}\",\"title\":\"{title}\",\"date\":\"{date}\",\"country\":\"{country}\",\"status\":\"Official\",\"media\":[{{\"position\":1,\"track-count\":{trackCount},\"tracks\":[{tracks}]}}]}}";
         }
 
         private sealed class FakeMusicBrainzApi : IMusicBrainzApi

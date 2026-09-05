@@ -195,13 +195,18 @@ namespace MusicStrmExtract.Online
                             if (mapping is null) continue;
                             if (HasExactTrackCount(localDiscs, mapping))
                             {
-                                if (exactCandidates.Count == 0 || score == exactCandidates[0].Score)
+                                if (exactCandidates.Count == 0)
+                                {
+                                    exactCandidates.Add((release, releaseRoot, medias, score));
+                                }
+                                else if (EquivalentInRanking(releaseRoot, exactCandidates[0].ReleaseRoot, score, exactCandidates[0].Score, localYear))
                                 {
                                     exactCandidates.Add((release, releaseRoot, medias, score));
                                 }
                                 else
                                 {
-                                    // 已低于顶级分数档,后续不可能靠封面数胜出
+                                    // ScoreAll 已判定该候选排序更低(不同分,或同分但年份/日期不同),
+                                    // CAA 不应覆盖"年份/日期 → 原版优先",直接停止收集。
                                     break;
                                 }
                             }
@@ -314,6 +319,38 @@ namespace MusicStrmExtract.Online
             }
 
             return best!;
+        }
+
+        /// <summary>两个 release 是否在 ScoreAll 的排序键下真正并列(同分 + 同年份就近 + 同日期);
+        /// 无本地年份时 ScoreAll 只按分排序,同分即同级、可交给 CAA 决胜。</summary>
+        private static bool EquivalentInRanking(JsonElement candidate, JsonElement baseline, int candidateScore, int baselineScore, int? localYear)
+        {
+            if (candidateScore != baselineScore)
+            {
+                return false;
+            }
+
+            if (localYear is null)
+            {
+                return true;
+            }
+
+            var candidateYear = ParseYear(GetString(candidate, "date"));
+            var baselineYear = ParseYear(GetString(baseline, "date"));
+            if (!candidateYear.HasValue || !baselineYear.HasValue)
+            {
+                return false; // 缺年份:ScoreAll 会把"有年份"排前,缺失项不视为并列
+            }
+
+            if (Math.Abs(candidateYear.Value - localYear.Value) != Math.Abs(baselineYear.Value - localYear.Value))
+            {
+                return false;
+            }
+
+            return string.Equals(
+                GetString(candidate, "date") ?? "9999",
+                GetString(baseline, "date") ?? "9999",
+                StringComparison.Ordinal);
         }
 
         /// <summary>本地碟组与 release media 的轨数是否逐碟完全一致(用于优先标准版/普通版)。</summary>
