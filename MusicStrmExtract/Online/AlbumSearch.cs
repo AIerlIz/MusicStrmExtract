@@ -181,8 +181,8 @@ namespace MusicStrmExtract.Online
                             var mapping = MapLocalDiscsToMedias(localDiscs, medias);
                             if (mapping is null) continue;
                             if (HasExactTrackCount(localDiscs, mapping))
-                                return BuildAlbumResult(release, medias);
-                            firstFallback ??= BuildAlbumResult(release, medias);
+                                return BuildAlbumResult(releaseRoot, medias);
+                            firstFallback ??= BuildAlbumResult(releaseRoot, medias);
                         }
 
                         // RG 路径无任何布局命中时,继续走下方 top-10 循环(可能含其它 RG 的 release)
