@@ -39,7 +39,7 @@ namespace MusicStrmExtract.Providers
             _libraryManager = libraryManager;
         }
 
-        public string Name => "Music Strm Extract (目录)";
+        public string Name => "Music Strm Extract";
 
         /// <summary>按 strm 路径解析"艺人\专辑\碟"文件夹结构。
         /// 返回 (专辑文件夹名, 艺人文件夹名, 专辑实际目录, 碟号);strm 直接在专辑目录时碟号为 null,

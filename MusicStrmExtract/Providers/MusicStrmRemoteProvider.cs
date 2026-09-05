@@ -44,7 +44,7 @@ namespace MusicStrmExtract.Providers
             _http = null;
         }
 
-        public string Name => "Music Strm Extract (在线)";
+        public string Name => "Music Strm Extract";
 
         /// <summary>搜索资源(本插件在线源固定,无需搜索候选;空实现以满足 IRemoteSearchProvider)。</summary>
         public Task<IEnumerable<RemoteSearchResult>> GetSearchResults(SongInfo searchInfo, CancellationToken cancellationToken)
