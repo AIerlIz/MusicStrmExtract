@@ -55,9 +55,9 @@ namespace MusicStrmExtract.Tests
             var noFrontFive = BuildCoverArt(5, front: false);
             var singleFront = BuildCoverArt(1, front: true);
 
-            Assert.Equal(10003, AlbumSearch.ParseCoverArtCount(frontThree)); // 有正面 + 3 图
-            Assert.Equal(5, AlbumSearch.ParseCoverArtCount(noFrontFive));    // 无正面 + 5 图
-            Assert.Equal(10001, AlbumSearch.ParseCoverArtCount(singleFront)); // 有正面 + 1 图
+            Assert.Equal(10003, CoverArtClient.ParseCoverArtCount(frontThree)); // 有正面 + 3 图
+            Assert.Equal(5, CoverArtClient.ParseCoverArtCount(noFrontFive));    // 无正面 + 5 图
+            Assert.Equal(10001, CoverArtClient.ParseCoverArtCount(singleFront)); // 有正面 + 1 图
         }
 
         [Fact]

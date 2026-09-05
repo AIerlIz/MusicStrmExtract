@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace MusicStrmExtract.Online
 {
-    public sealed class MusicBrainzApi : IDisposable
+    public sealed class MusicBrainzApi : IMusicBrainzApi
     {
         private const string DefaultBaseUrl = "https://musicbrainz.org";
 

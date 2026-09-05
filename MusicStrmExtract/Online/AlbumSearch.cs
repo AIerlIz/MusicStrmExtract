@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
-using System.Net.Http;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -78,25 +77,13 @@ namespace MusicStrmExtract.Online
         /// <summary>逐个尝试的候选 release 上限;布局不匹配时继续尝试下一个,避免多碟选到错误的单碟版本。</summary>
         public const int MaxCandidateReleases = 5;
 
-        private readonly MusicBrainzApi _api;
-        private readonly string _coverArtBaseUrl;
+        private readonly IMusicBrainzApi _api;
+        private readonly ICoverArtClient _coverArtClient;
 
-        private const string DefaultCoverArtBaseUrl = "https://coverartarchive.org/release/";
-
-        private static readonly HttpClient CoverArtHttp = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
-
-        static AlbumSearch()
-        {
-            CoverArtHttp.DefaultRequestHeaders.UserAgent.ParseAdd(PluginConstants.UserAgent);
-            CoverArtHttp.Timeout = TimeSpan.FromSeconds(15);
-        }
-
-        public AlbumSearch(MusicBrainzApi api, string? coverArtBaseUrl = null)
+        public AlbumSearch(IMusicBrainzApi api, ICoverArtClient coverArtClient)
         {
             _api = api;
-            _coverArtBaseUrl = string.IsNullOrWhiteSpace(coverArtBaseUrl)
-                ? DefaultCoverArtBaseUrl
-                : coverArtBaseUrl.TrimEnd('/') + "/";
+            _coverArtClient = coverArtClient;
         }
 
         /// <summary>去除专辑名中的年份/附加括号等,得到核心名:"叶惠美 (2003)"→"叶惠美","七里香-2004"→"七里香"。</summary>
@@ -317,7 +304,7 @@ namespace MusicStrmExtract.Online
             foreach (var (_, releaseRoot, medias, _) in candidates)
             {
                 var mbid = GetString(releaseRoot, "id");
-                var cover = string.IsNullOrWhiteSpace(mbid) ? 0 : await CountCoverArtAsync(mbid, ct).ConfigureAwait(false);
+                var cover = string.IsNullOrWhiteSpace(mbid) ? 0 : await _coverArtClient.GetCoverArtCountAsync(mbid, ct).ConfigureAwait(false);
                 var built = BuildAlbumResult(releaseRoot, medias);
                 if (best is null || cover > bestCover)
                 {
@@ -327,51 +314,6 @@ namespace MusicStrmExtract.Online
             }
 
             return best!;
-        }
-
-        /// <summary>查询 Cover Art Archive 该 release 的封面分(有正面+图数)。CAA 不可达/异常按 0 处理。</summary>
-        private async Task<int> CountCoverArtAsync(string releaseMbid, CancellationToken ct)
-        {
-            try
-            {
-                var url = $"{_coverArtBaseUrl}{Uri.EscapeDataString(releaseMbid)}";
-                using var resp = await CoverArtHttp.GetAsync(url, ct).ConfigureAwait(false);
-                if (!resp.IsSuccessStatusCode)
-                {
-                    return 0;
-                }
-
-                var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                using var doc = JsonDocument.Parse(body);
-                return ParseCoverArtCount(doc.RootElement);
-            }
-            catch
-            {
-                return 0;
-            }
-        }
-
-        /// <summary>从 Cover Art Archive release 响应的根节点解析封面分:有正面 +10000,再加图数。</summary>
-        public static int ParseCoverArtCount(JsonElement root)
-        {
-            if (root.TryGetProperty("images", out var images) && images.ValueKind == JsonValueKind.Array)
-            {
-                var count = 0;
-                var front = false;
-                foreach (var img in images.EnumerateArray())
-                {
-                    if (img.TryGetProperty("front", out var f) && f.ValueKind == JsonValueKind.True)
-                    {
-                        front = true;
-                    }
-
-                    count++;
-                }
-
-                return (front ? 10000 : 0) + count;
-            }
-
-            return 0;
         }
 
         /// <summary>本地碟组与 release media 的轨数是否逐碟完全一致(用于优先标准版/普通版)。</summary>

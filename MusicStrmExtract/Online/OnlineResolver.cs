@@ -20,12 +20,17 @@ namespace MusicStrmExtract.Online
     /// </summary>
     public sealed class OnlineResolver : IDisposable
     {
-        private readonly MusicBrainzApi _musicBrainz;
+        private readonly IMusicBrainzApi _musicBrainz;
         private bool _musicBrainzDown;
 
-        public OnlineResolver(string? musicBrainzBaseUrl = null)
+        public OnlineResolver(IMusicBrainzApi musicBrainz)
         {
-            _musicBrainz = new MusicBrainzApi(musicBrainzBaseUrl);
+            _musicBrainz = musicBrainz;
+        }
+
+        public OnlineResolver(string? musicBrainzBaseUrl = null)
+            : this(new MusicBrainzApi(musicBrainzBaseUrl))
+        {
         }
 
         public async Task<OnlineMetadata> ResolveAsync(TrackMetadata embedded, CancellationToken ct)
