@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Net.Http;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -167,6 +168,7 @@ namespace MusicStrmExtract.Online
             // 从 top-1 候选取 release-group-id,拉取该 RG 下全部 release,按 barcode/status/格式等维度打分。
             // 若 RG 查询失败、仅有一个 release、或全部不满足布局校验,回退到原有 top-10 排序逻辑。
             AlbumSearchResult? firstFallback = null;
+            string? firstFallbackMbid = null;
             var topRgInfo = ordered[0].Item.TryGetProperty("release-group", out var rgEl) ? rgEl : default;
             var topRgMbid = GetString(topRgInfo, "id");
             if (!string.IsNullOrWhiteSpace(topRgMbid))
@@ -188,6 +190,14 @@ namespace MusicStrmExtract.Online
                         {
                             var releaseMbid = GetString(release, "id");
                             if (string.IsNullOrWhiteSpace(releaseMbid)) continue;
+
+                            // 已找到首个 exact 后,只有真正同档的候选才值得继续拉详情做 CAA 决胜。
+                            if (exactCandidates.Count > 0
+                                && !EquivalentInRanking(release, exactCandidates[0].Release, score, exactCandidates[0].Score, localYear))
+                            {
+                                break;
+                            }
+
                             var releaseRoot = await _api.GetReleaseAsync(releaseMbid, ct).ConfigureAwait(false);
                             var medias = ParseReleaseMedias(releaseRoot);
                             if (medias.Count == 0) continue;
@@ -199,20 +209,15 @@ namespace MusicStrmExtract.Online
                                 {
                                     exactCandidates.Add((release, releaseRoot, medias, score));
                                 }
-                                else if (EquivalentInRanking(releaseRoot, exactCandidates[0].ReleaseRoot, score, exactCandidates[0].Score, localYear))
-                                {
-                                    exactCandidates.Add((release, releaseRoot, medias, score));
-                                }
                                 else
                                 {
-                                    // ScoreAll 已判定该候选排序更低(不同分,或同分但年份/日期不同),
-                                    // CAA 不应覆盖"年份/日期 → 原版优先",直接停止收集。
-                                    break;
+                                    exactCandidates.Add((release, releaseRoot, medias, score));
                                 }
                             }
                             else
                             {
                                 firstFallback ??= BuildAlbumResult(releaseRoot, medias);
+                                firstFallbackMbid ??= releaseMbid;
                             }
                         }
 
@@ -221,14 +226,15 @@ namespace MusicStrmExtract.Online
                             return await PickExactByCoverAsync(exactCandidates, ct).ConfigureAwait(false);
                         }
 
-                        // RG 路径无任何布局命中时,继续走下方 top-10 循环(可能含其它 RG 的 release)
-                        if (firstFallback is not null)
-                        {
-                            return firstFallback;
-                        }
+                        // RG 路径没有 exact 时不直接返回 firstFallback:
+                        // 搜索中更低顺位的其它 RG 可能才是轨数完全一致的版本,继续走下方 top-10 循环。
                     }
                 }
-                catch
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
                 {
                     // RG 查询失败,降级到下方原有 top-10 循环
                 }
@@ -242,6 +248,11 @@ namespace MusicStrmExtract.Online
             {
                 var releaseMbid = GetString(best.Item, "id");
                 if (string.IsNullOrWhiteSpace(releaseMbid))
+                {
+                    continue;
+                }
+
+                if (string.Equals(firstFallbackMbid, releaseMbid, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
@@ -612,11 +623,5 @@ namespace MusicStrmExtract.Online
                 .ToList();
         }
 
-
-        /// <summary>
-        /// 按 barcode 精确搜索 release,并校验本地碟组布局。
-        /// 优先使用 barcode 命中版本(用户物理介质确认过的版本),避免多地区同名 release 选错。
-        /// 返回 Found=true 表示匹配成功;false 表示未匹配(调用方回退到常规搜索)。
-        /// </summary>
     }
 }

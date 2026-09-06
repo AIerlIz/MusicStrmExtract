@@ -219,6 +219,20 @@ namespace MusicStrmExtract.Tests
         }
 
         [Fact]
+        public void ScoreAll_PreferredCountry_DoesNotOutrankOfficialInOtherCountry()
+        {
+            // 偏好国只有 Bootleg 时,country 权重不应把 Bootleg 抬到 Official 之上
+            var rg = BuildRgJson(
+                ("boot", "Bootleg", "ABC", "US", "2014-10-27", true, null),
+                ("official", "Official", "ABC", "GB", "2014-10-27", true, null)
+            );
+            var scored = ReleaseGroupScorer.ScoreAll(rg, preferredCountry: "US");
+
+            Assert.Equal("official", scored[0].Item.GetProperty("id").GetString());
+            Assert.True(scored[0].Score > scored[1].Score);
+        }
+
+        [Fact]
         public void InferPreferredCountry_ReturnsNull_WhenNoCompatible()
         {
             // 唯一候选无 barcode,不应产生偏好国家

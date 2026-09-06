@@ -61,6 +61,16 @@ namespace MusicStrmExtract.Tests
         }
 
         [Fact]
+        public void BuildFrontImageUrl_RespectsConfiguredBase()
+        {
+            var client = new CoverArtClient("https://mirror.example/release");
+
+            Assert.Equal(
+                "https://mirror.example/release/release-1/front-500",
+                client.BuildFrontImageUrl("release-1"));
+        }
+
+        [Fact]
         public void SelectBestMedia_PicksMainCd_RejectsMvDisc()
         {
             var local = Local(1, 10);

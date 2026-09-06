@@ -7,9 +7,9 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>MusicStrmExtract</AssemblyName>
     <RootNamespace>MusicStrmExtract</RootNamespace>
-    <Version>1.5.0.0</Version>
-    <AssemblyVersion>1.5.0.0</AssemblyVersion>
-    <FileVersion>1.5.0.0</FileVersion>
+    <Version>1.6.0.0</Version>
+    <AssemblyVersion>1.6.0.0</AssemblyVersion>
+    <FileVersion>1.6.0.0</FileVersion>
     <Product>Music Strm Extract</Product>
     <Description>按歌手/专辑目录与轨号从 MusicBrainz 补全 .strm 音乐元数据</Description>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>

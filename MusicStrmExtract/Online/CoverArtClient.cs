@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace MusicStrmExtract.Online
 {
-    /// <summary>Cover Art Archive 的历史实现:对 release 查询封面数。</summary>
+    /// <summary>Cover Art Archive 客户端:查询封面数并生成封面下载 URL。</summary>
     public sealed class CoverArtClient : ICoverArtClient
     {
         private const string DefaultBaseUrl = "https://coverartarchive.org/release/";
@@ -43,10 +43,20 @@ namespace MusicStrmExtract.Online
                 using var doc = JsonDocument.Parse(body);
                 return ParseCoverArtCount(doc.RootElement);
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
             catch
             {
                 return 0;
             }
+        }
+
+        /// <summary>按配置的基础地址生成 release 正面封面 URL(供 Emby 图片下载器使用)。</summary>
+        public string BuildFrontImageUrl(string releaseMbid)
+        {
+            return $"{_baseUrl}{Uri.EscapeDataString(releaseMbid)}/front-500";
         }
 
         /// <summary>从 Cover Art Archive release 响应的根节点解析封面分:有正面 +10000,再加图数。</summary>

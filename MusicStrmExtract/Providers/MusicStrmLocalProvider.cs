@@ -11,10 +11,8 @@ using System.Threading.Tasks;
 
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Audio;
-using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Configuration;
-using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Logging;
 
 using MusicStrmExtract.Online;
@@ -27,16 +25,16 @@ namespace MusicStrmExtract.Providers
     /// 按艺人 + 专辑文件夹名查询 MB release,用轨号覆盖选择 media,再按轨号直接取 tracklist
     /// 数据(recording MBID/标题/艺人),整张专辑一次定位并缓存;不做远程探测、不做文件名文本匹配。
     /// 未命中的条目返回空结果,由 Emby 后续流程决定是否保持现状或做其它在线补全。
+    /// 命中时不直接写库:返回的 Audio 带 Album/AlbumArtists/MBID,由 Emby 合并保存并自动
+    /// 创建/关联 MusicAlbum、MusicArtist。
     /// </summary>
     public sealed class MusicStrmLocalProvider : ILocalMetadataProvider<Audio>
     {
         private readonly ILogger _logger;
-        private readonly ILibraryManager _libraryManager;
 
-        public MusicStrmLocalProvider(ILogManager logManager, ILibraryManager libraryManager)
+        public MusicStrmLocalProvider(ILogManager logManager)
         {
             _logger = logManager.GetLogger("MusicStrmExtract");
-            _libraryManager = libraryManager;
         }
 
         public string Name => "Music Strm Extract";
@@ -70,87 +68,6 @@ namespace MusicStrmExtract.Providers
                 string.IsNullOrWhiteSpace(artistDir2) ? null : Path.GetFileName(artistDir2),
                 fileDir,
                 null);
-        }
-
-        /// <summary>引擎合并时可能被 RemoteProvider(基于库中旧 MBID 的在线结果)覆盖,这里把本地
-        /// 目录定位得到的最终字段直写真实条目(UpdateToRepository 实测有效),保证本地结果优先。</summary>
-        private void SyncRepositoryItem(ItemInfo info, Audio item)
-        {
-            try
-            {
-                var real = _libraryManager.GetItemList(new InternalItemsQuery
-                {
-                    Path = info.Path,
-                    Limit = 1,
-                    IncludeItemTypes = new[] { "Audio" }
-                }).FirstOrDefault() as Audio;
-                if (real is null
-                    || string.IsNullOrWhiteSpace(real.Path)
-                    || !real.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
-                {
-                    return;
-                }
-
-                var changed = false;
-                if (!string.IsNullOrWhiteSpace(item.Album)
-                    && !string.Equals(real.Album, item.Album, StringComparison.Ordinal))
-                {
-                    real.Album = item.Album;
-                    changed = true;
-                }
-
-                var wantedArtists = item.AlbumArtists.Where(a => !string.IsNullOrWhiteSpace(a)).ToArray();
-                if (wantedArtists.Length > 0
-                    && !real.AlbumArtists.SequenceEqual(wantedArtists, StringComparer.Ordinal))
-                {
-                    real.AlbumArtists = wantedArtists.ToArray();
-                    changed = true;
-                }
-
-                if (!string.IsNullOrWhiteSpace(item.Name)
-                    && !string.Equals(real.Name, item.Name, StringComparison.Ordinal))
-                {
-                    real.Name = item.Name;
-                    changed = true;
-                }
-
-                if (item.ProductionYear != real.ProductionYear)
-                {
-                    real.ProductionYear = item.ProductionYear;
-                    changed = true;
-                }
-
-                if (item.IndexNumber != real.IndexNumber)
-                {
-                    real.IndexNumber = item.IndexNumber;
-                    changed = true;
-                }
-
-                if (item.ParentIndexNumber != real.ParentIndexNumber)
-                {
-                    real.ParentIndexNumber = item.ParentIndexNumber;
-                    changed = true;
-                }
-
-                foreach (var kv in item.ProviderIds)
-                {
-                    if (!real.ProviderIds.TryGetValue(kv.Key, out var current) || current != kv.Value)
-                    {
-                        real.ProviderIds[kv.Key] = kv.Value;
-                        changed = true;
-                    }
-                }
-
-                if (changed)
-                {
-                    real.UpdateToRepository(ItemUpdateType.MetadataEdit);
-                    _logger.Info($"[MusicStrmExtract] [LocalProvider] 直写真实条目: Id={real.Id} Name='{real.Name}' Album='{real.Album}' MBTrack={item.ProviderIds.GetValueOrDefault("MusicBrainzTrack")}");
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.Error($"[MusicStrmExtract] [LocalProvider] 直写条目失败: Path={info.Path} -> {ex.Message}");
-            }
         }
 
         /// <summary>专辑定位结果缓存(键=专辑文件夹|艺人文件夹;TTL 30 分钟)。
@@ -241,6 +158,10 @@ namespace MusicStrmExtract.Providers
                     config,
                     ct).ConfigureAwait(false);
             }
+            catch (Exception ex) when (ex is OperationCanceledException && ct.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
             {
                 // MB 不可达/超时:不写缓存、不产生结果(条目保持现状)
@@ -315,7 +236,7 @@ namespace MusicStrmExtract.Providers
 
             result.Item = item;
             result.HasMetadata = true;
-            SyncRepositoryItem(info, item);
+            ct.ThrowIfCancellationRequested();
 
             _logger.Info($"[MusicStrmExtract] [LocalProvider] 专辑轨道定位: '{albumFolder}' 碟 {media.Position} 轨 {track.Number} '{track.Title}' recordingMBID={track.RecordingMbid}");
             return true;
@@ -340,6 +261,7 @@ namespace MusicStrmExtract.Providers
             var coverArt = new CoverArtClient(config.CoverArtBaseUrl);
             var search = new AlbumSearch(api, coverArt);
             var result = await search.SearchForTrackMapAsync(albumFolder, artistFolder, localDiscs, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
             PruneCache(AlbumCache);
             AlbumCache[key] = (DateTime.UtcNow, result);
             _logger.Info($"[MusicStrmExtract] [LocalProvider] 专辑定位: '{albumFolder}' -> " +

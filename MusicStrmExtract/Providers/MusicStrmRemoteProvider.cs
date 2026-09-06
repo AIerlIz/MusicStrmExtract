@@ -148,10 +148,12 @@ namespace MusicStrmExtract.Providers
             var albumId = info.GetProviderId("MusicBrainzAlbum");
             if (!string.IsNullOrWhiteSpace(albumId))
             {
+                var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+                var coverArt = new CoverArtClient(config.CoverArtBaseUrl);
                 images.Add(new RemoteImageInfo
                 {
                     ProviderName = Name,
-                    Url = $"https://coverartarchive.org/release/{albumId}/front-500",
+                    Url = coverArt.BuildFrontImageUrl(albumId),
                     Type = ImageType.Primary
                 });
             }

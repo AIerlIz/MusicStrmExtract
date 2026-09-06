@@ -77,6 +77,45 @@ namespace MusicStrmExtract.Tests
             Assert.Equal("orig", result.ReleaseMbid);
         }
 
+        [Fact]
+        public async Task SearchForTrackMapAsync_StopsAfterExactTier_WhenNoEquivalentCandidate()
+        {
+            var api = new FakeMusicBrainzApi
+            {
+                SearchJson = SearchReleases("rg-1"),
+                RgJson = RgReleases(("top", "US", "AAA", "2014-10-27"), ("later", "US", "AAA", "2018-06-15"))
+            };
+            api.ReleaseDetails["top"] = ReleaseDetail("top", "1989", "US", 13, "2014-10-27");
+
+            var result = await RunAsync(api, new FakeCoverArtClient());
+
+            Assert.True(result.Found);
+            Assert.Equal("top", result.ReleaseMbid);
+            Assert.Equal(1, api.ReleaseDetailCalls);
+        }
+
+        [Fact]
+        public async Task SearchForTrackMapAsync_PrefersExactReleaseFromAnotherReleaseGroup()
+        {
+            var api = new FakeMusicBrainzApi
+            {
+                SearchJson =
+                    "{\"releases\":[" +
+                    SearchReleaseJson("top-rg1", "rg-1", 100) + "," +
+                    SearchReleaseJson("other-rg2", "rg-2", 90) +
+                    "]}",
+                RgJson = RgReleases(("top-rg1", "US", "AAA", "2014-10-27"), ("alt-rg1", "US", "BBB", "2014-10-27"))
+            };
+            api.ReleaseDetails["top-rg1"] = ReleaseDetail("top-rg1", "1989", "US", 14, "2014-10-27");
+            api.ReleaseDetails["alt-rg1"] = ReleaseDetail("alt-rg1", "1989", "US", 14, "2014-10-27");
+            api.ReleaseDetails["other-rg2"] = ReleaseDetail("other-rg2", "1989", "GB", 13, "2014-10-27");
+
+            var result = await RunAsync(api, new FakeCoverArtClient());
+
+            Assert.True(result.Found);
+            Assert.Equal("other-rg2", result.ReleaseMbid);
+        }
+
         private static async Task<AlbumSearchResult> RunAsync(FakeMusicBrainzApi api, FakeCoverArtClient cover)
         {
             var local = new LocalDisc();
@@ -85,9 +124,16 @@ namespace MusicStrmExtract.Tests
                 "1989 (2014)", "Artist", new[] { local }, CancellationToken.None).ConfigureAwait(false);
         }
 
+        private static string SearchReleaseJson(string id, string rgId, int score)
+        {
+            return $"{{\"id\":\"{id}\",\"score\":{score},\"title\":\"1989\",\"date\":\"2014-10-27\"," +
+                   $"\"status\":\"Official\",\"country\":\"US\",\"artist-credit\":[]," +
+                   $"\"release-group\":{{\"id\":\"{rgId}\"}}}}";
+        }
+
         private static string SearchReleases(string rgId)
         {
-            return $"{{\"releases\":[{{\"id\":\"sr-1\",\"score\":100,\"title\":\"1989\",\"date\":\"2014-10-27\",\"status\":\"Official\",\"country\":\"US\",\"release-group\":{{\"id\":\"{rgId}\"}}}}]}}";
+            return $"{{\"releases\":[{SearchReleaseJson("sr-1", rgId, 100)}]}}";
         }
 
         private static string RgReleases(params (string Id, string Country, string Barcode, string Date)[] releases)
@@ -124,6 +170,8 @@ namespace MusicStrmExtract.Tests
 
             public Dictionary<string, string> ReleaseDetails { get; } = new Dictionary<string, string>(StringComparer.Ordinal);
 
+            public int ReleaseDetailCalls { get; private set; }
+
             public Task<JsonElement> SearchReleasesAsync(string album, string? artist, int limit, CancellationToken ct)
                 => Task.FromResult(Parse(SearchJson));
 
@@ -131,7 +179,10 @@ namespace MusicStrmExtract.Tests
                 => Task.FromResult(Parse(RgJson));
 
             public Task<JsonElement> GetReleaseAsync(string releaseMbid, CancellationToken ct)
-                => Task.FromResult(Parse(ReleaseDetails.TryGetValue(releaseMbid, out var json) ? json : "{\"media\":[]}"));
+            {
+                ReleaseDetailCalls++;
+                return Task.FromResult(Parse(ReleaseDetails.TryGetValue(releaseMbid, out var json) ? json : "{\"media\":[]}"));
+            }
 
             public Task<JsonElement> GetRecordingAsync(string recordingMbid, CancellationToken ct)
                 => Task.FromResult(Parse("{}"));

@@ -45,6 +45,10 @@ namespace MusicStrmExtract.Online
                         return result;
                     }
                 }
+                catch (Exception ex) when (ex is OperationCanceledException && ct.IsCancellationRequested)
+                {
+                    throw;
+                }
                 catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
                 {
                     // 404 = 该 MBID/查询在 MusicBrainz 无对应条目(脏 ID 属业务性无结果),不熔断,继续文本搜索;
@@ -66,6 +70,10 @@ namespace MusicStrmExtract.Online
                     {
                         return textResult;
                     }
+                }
+                catch (Exception ex) when (ex is OperationCanceledException && ct.IsCancellationRequested)
+                {
+                    throw;
                 }
                 catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
                 {

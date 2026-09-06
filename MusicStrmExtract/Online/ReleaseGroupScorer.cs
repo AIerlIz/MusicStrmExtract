@@ -30,7 +30,8 @@ namespace MusicStrmExtract.Online
         /// </summary>
         /// <param name="allReleases">release-group 响应中的 releases JSON 数组。</param>
         /// <param name="localYear">本地目录名解析出的年份（如 "七里香 (2004)" → 2004）；null 表示无年份，跳过就近排序。</param>
-        /// <param name="preferredCountry">自动推断出的偏好国家（ISO 3166-1 alpha-2）；null 表示不启用国家加权。</param>
+        /// <param name="preferredCountry">自动推断出的偏好国家（ISO 3166-1 alpha-2）；
+        /// 只在最高基础分档内参与决胜，null 表示不启用国家加权。</param>
         public static List<(JsonElement Item, int Score)> ScoreAll(JsonElement allReleases, int? localYear = null, string? preferredCountry = null)
         {
             var result = new List<(JsonElement Item, int Score)>();
@@ -48,8 +49,28 @@ namespace MusicStrmExtract.Online
 
             foreach (var r in allReleases.EnumerateArray())
             {
-                var score = ScoreRelease(r, barcodeCounts, preferredCountry);
+                var score = ScoreRelease(r, barcodeCounts);
                 result.Add((r, score));
+            }
+
+            // 偏好国家只在最高基础分档内生效:低于最高档的 Bootleg/Pseudo-Release
+            // 即使来自偏好国家也不能靠大权重反超更可信的官方版本。
+            if (!string.IsNullOrWhiteSpace(preferredCountry) && result.Count > 0)
+            {
+                var maxBase = result.Max(x => x.Score);
+                for (var i = 0; i < result.Count; i++)
+                {
+                    if (result[i].Score != maxBase)
+                    {
+                        continue;
+                    }
+
+                    var country = GetString(result[i].Item, "country");
+                    if (string.Equals(country, preferredCountry, StringComparison.OrdinalIgnoreCase))
+                    {
+                        result[i] = (result[i].Item, result[i].Score + PreferredCountryWeight);
+                    }
+                }
             }
 
             if (localYear.HasValue)
@@ -169,7 +190,7 @@ namespace MusicStrmExtract.Online
             return true;
         }
 
-        private static int ScoreRelease(JsonElement release, Dictionary<string, int> barcodeCounts, string? preferredCountry = null)
+        private static int ScoreRelease(JsonElement release, Dictionary<string, int> barcodeCounts)
         {
             int score = 0;
 
@@ -221,16 +242,6 @@ namespace MusicStrmExtract.Online
             if (string.IsNullOrWhiteSpace(disambig))
             {
                 score += DisambiguationEmptyWeight;
-            }
-
-            // 国家偏好:命中偏好国家,加一个大权重顶到并列前列(是否真正选中仍受精确轨数硬校验约束)
-            if (!string.IsNullOrWhiteSpace(preferredCountry))
-            {
-                var country = GetString(release, "country");
-                if (string.Equals(country, preferredCountry, StringComparison.OrdinalIgnoreCase))
-                {
-                    score += PreferredCountryWeight;
-                }
             }
 
             return score;

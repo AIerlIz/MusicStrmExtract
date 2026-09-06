@@ -98,6 +98,7 @@ Music Strm Extract 是一个 Emby 插件，给音乐库里的 `.strm` 音频补�
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
 | `MusicBrainzBaseUrl` | 空 | MusicBrainz 服务地址。留空使用官方 `https://musicbrainz.org`；官方不稳定时可填写镜像，例如 `https://musicbrainz.emby.tv` |
+| `CoverArtBaseUrl` | 空 | Cover Art Archive 服务地址。留空使用官方 `https://coverartarchive.org/release/`；网络受限时可填写镜像地址，需以 `/` 或 `/release` 结尾 |
 
 ## 首次使用
 
