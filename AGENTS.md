@@ -31,6 +31,12 @@
 - 缓存 key 包含 `MusicBrainzBaseUrl`/`CoverArtBaseUrl`，切换镜像后不会命中旧结果。
 - 修改缓存语义时同步维护 `TtlCacheTests`。
 
+### 配置页运行按钮
+- `Plugin` 仍继承 `BasePluginSimpleUI<PluginConfiguration>` 负责 JSON 配置存储，并在类声明中显式列出 `IHasUIPages`，通过公开的 `UIPageControllers` 属性重实现接口，覆盖基类的 Simple UI 页面；只写属性而不重新声明接口不会生效。
+- 配置页按钮命令由 `MusicStrmPageView.RunCommand` 转发到 `StaleMusicAlbumRepairService`；不要在 Provider 链路里直接调用修复逻辑。
+- 修复只删除无 `MusicBrainzAlbum`、无文件路径、且未被任何 Audio `AlbumId` 引用的 `MusicAlbum`，随后排队刷新相关 `.strm`；不要改成无确认地批量删库。
+- 页面新增按钮时，确认 `ButtonItem.CommandId` 与 `MusicStrmPageView.RunCommand` 的分支一致。
+
 ### RG 选版与请求收敛
 - `AlbumSearch.SearchForTrackMapAsync` 会先检查 top-1 候选所在的 release-group；若当前 RG 没有轨数完全一致的 exact 命中，会继续检查搜索候选里其它 RG 的精确命中。
 - 找到首个 exact 后，只继续拉取真正同档的候选用于 CAA 决胜，避免逐个请求整个 release-group 的完整 tracklist。
@@ -45,6 +51,6 @@
 - 涉及新增 MusicBrainz 请求入口时统一走 `GetJsonRootAsync`，不要绕过缓存与限流直接发 `HttpClient`。
 
 ### 发版与验证
-- 项目版本号需要手动同步：发新 tag 前更新 `MusicStrmExtract.csproj` 的 `Version`、`AssemblyVersion`、`FileVersion`。当前已同步为 `1.6.0.0`。
+- 项目版本号需要手动同步：发新 tag 前更新 `MusicStrmExtract.csproj` 的 `Version`、`AssemblyVersion`、`FileVersion`。当前已同步为 `1.7.0.0`。
 - 常规验证命令：`dotnet test tests\MusicStrmExtract.Tests\MusicStrmExtract.Tests.csproj -c Release --no-restore --nologo`。
 - 涉及封面、直写或刷新流程的改动，发布前建议连接 Emby Server 跑一次媒体库刷新。

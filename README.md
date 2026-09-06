@@ -96,6 +96,8 @@ Music Strm Extract 是一个 Emby 插件，给音乐库里的 `.strm` 音频补�
 2. 在 “Music Strm Extract” 上点击“设置”。
 3. 修改配置后保存，不需要重启 Emby。
 
+设置页还提供“运行旧库修复”按钮，用于删除未被 Audio 引用且缺少 MusicBrainzAlbum 的陈旧 MusicAlbum，并刷新相关 `.strm`。
+
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
 | `MusicBrainzBaseUrl` | 空 | MusicBrainz 服务地址。留空使用官方 `https://musicbrainz.org`；官方不稳定时可填写镜像，例如 `https://musicbrainz.emby.tv` |
