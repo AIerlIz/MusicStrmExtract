@@ -1,15 +1,11 @@
 # Agent Instructions
 
 ## Proxy
-当需要访问外网时，使用以下代理：
-- HTTP/HTTPS 代理：`<HTTP_PROXY>`
+代理、Emby 地址与凭据只保存在本机未跟踪的 `AGENTS.local.md`（已加入 `.gitignore`）。
+本文件不填写实际值，也不要把 `AGENTS.local.md` 的内容复制进本仓库。
 
 ## Emby Server (端到端测试)
-本仓库不保存测试环境凭据；需要端到端验证时从本地环境或本地配置读取。
-- Emby 地址：`http://localhost:8096/`
-- API Key：`<EMBY_API_KEY>`
-- 管理员用户：`<EMBY_ADMIN_USER>`
-- 管理员密码：`<EMBY_ADMIN_PASSWORD>`
+需要外网或 Emby 端到端验证时，先读取本机 `AGENTS.local.md` 中的对应值。
 
 ## 开发与维护注意事项
 

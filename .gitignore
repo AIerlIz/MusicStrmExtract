@@ -3,3 +3,4 @@ obj/
 *.user
 .vs/
 .reasonix/
+AGENTS.local.md
