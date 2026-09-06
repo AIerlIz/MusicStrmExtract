@@ -23,9 +23,21 @@
 - 配置镜像时地址应以 `/` 或 `/release` 结尾；留空则使用官方 `https://coverartarchive.org/release/`。
 - 后续新增封面相关代码时不要写死官方地址，应继续通过 `CoverArtClient.BuildFrontImageUrl` 生成。
 
+### Remote Provider 只服务 .strm
+- `MusicStrmRemoteProvider` 只负责 `.strm` 封面：普通音频自带标签，不交给本插件做在线补全。
+- 修改 `GetMetadata`/`GetImages` 时保留 `.strm` 路径过滤，参考 `IsStrmPath`。
+- `OnlineResolver`/`MergePolicy` 已随普通音频在线补全链路一起移除，不要按 recording/text search 重新引入。
+
+### 专辑定位缓存
+- `MusicStrmLocalProvider.AlbumCache` 使用通用 `TtlCache`：TTL 30 分钟、容量 500。
+- 过期项按插入序惰性清理，超容量只淘汰最旧条目；不要改成每次全表遍历或整体清空。
+- 缓存 key 包含 `MusicBrainzBaseUrl`/`CoverArtBaseUrl`，切换镜像后不会命中旧结果。
+- 修改缓存语义时同步维护 `TtlCacheTests`。
+
 ### RG 选版与请求收敛
 - `AlbumSearch.SearchForTrackMapAsync` 会先检查 top-1 候选所在的 release-group；若当前 RG 没有轨数完全一致的 exact 命中，会继续检查搜索候选里其它 RG 的精确命中。
 - 找到首个 exact 后，只继续拉取真正同档的候选用于 CAA 决胜，避免逐个请求整个 release-group 的完整 tracklist。
+- 同分且双方 release 都缺年份/日期时仍属同档，应继续收集并交给 CAA 决胜。
 - 国家偏好只作用于最高基础分档，不能把低状态版本的分数抬到官方版本之上。
 - 修改这些排序、提前返回或断点逻辑时，同步维护 `AlbumSearchSelectionTests` 和 `ReleaseGroupScorerTests`。
 

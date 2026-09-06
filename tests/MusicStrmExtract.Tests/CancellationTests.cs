@@ -3,7 +3,6 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-using MusicStrmExtract.Metadata;
 using MusicStrmExtract.Online;
 
 using Xunit;
@@ -27,20 +26,6 @@ namespace MusicStrmExtract.Tests
                     "Artist",
                     new[] { local },
                     cts.Token);
-            });
-        }
-
-        [Fact]
-        public async Task OnlineResolver_TrackLookupCancellation_IsPropagated()
-        {
-            var cts = new CancellationTokenSource();
-            var api = new CancelOnRecordingApi(cts);
-            var embedded = new TrackMetadata { Title = "Song", MusicBrainzTrackId = "track-1" };
-
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
-            {
-                using var resolver = new OnlineResolver(api);
-                await resolver.ResolveAsync(embedded, cts.Token);
             });
         }
 
@@ -75,45 +60,6 @@ namespace MusicStrmExtract.Tests
             }
 
             public Task<JsonElement> GetReleaseAsync(string releaseMbid, CancellationToken ct)
-                => Task.FromResult(JsonDocument.Parse("{}").RootElement);
-
-            public Task<JsonElement> GetRecordingAsync(string recordingMbid, CancellationToken ct)
-                => Task.FromResult(JsonDocument.Parse("{}").RootElement);
-
-            public Task<JsonElement> SearchRecordingsAsync(string title, int limit, CancellationToken ct)
-                => Task.FromResult(JsonDocument.Parse("{}").RootElement);
-
-            public void Dispose()
-            {
-            }
-        }
-
-        private sealed class CancelOnRecordingApi : IMusicBrainzApi
-        {
-            private readonly CancellationTokenSource _cts;
-
-            public CancelOnRecordingApi(CancellationTokenSource cts)
-            {
-                _cts = cts;
-            }
-
-            public Task<JsonElement> GetRecordingAsync(string recordingMbid, CancellationToken ct)
-            {
-                _cts.Cancel();
-                _cts.Token.ThrowIfCancellationRequested();
-                return Task.FromResult(JsonDocument.Parse("{}").RootElement);
-            }
-
-            public Task<JsonElement> GetReleaseAsync(string releaseMbid, CancellationToken ct)
-                => Task.FromResult(JsonDocument.Parse("{}").RootElement);
-
-            public Task<JsonElement> GetReleaseGroupReleasesAsync(string rgMbid, CancellationToken ct)
-                => Task.FromResult(JsonDocument.Parse("{}").RootElement);
-
-            public Task<JsonElement> SearchReleasesAsync(string album, string? artist, int limit, CancellationToken ct)
-                => Task.FromResult(JsonDocument.Parse("{}").RootElement);
-
-            public Task<JsonElement> SearchRecordingsAsync(string title, int limit, CancellationToken ct)
                 => Task.FromResult(JsonDocument.Parse("{}").RootElement);
 
             public void Dispose()

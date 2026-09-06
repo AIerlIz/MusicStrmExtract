@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -15,6 +14,7 @@ using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Configuration;
 using MediaBrowser.Model.Logging;
 
+using MusicStrmExtract.Caching;
 using MusicStrmExtract.Online;
 
 namespace MusicStrmExtract.Providers
@@ -70,30 +70,12 @@ namespace MusicStrmExtract.Providers
                 null);
         }
 
-        /// <summary>专辑定位结果缓存(键=专辑文件夹|艺人文件夹;TTL 30 分钟)。
+        /// <summary>专辑定位结果缓存(键=专辑文件夹|艺人文件夹;TTL 30 分钟,容量 500)。
         /// 含整张专辑的轨道映射——同专辑后续 strm 条目零请求直接命中。</summary>
-        private static readonly ConcurrentDictionary<string, (DateTime CreatedUtc, AlbumSearchResult Value)> AlbumCache =
-            new ConcurrentDictionary<string, (DateTime, AlbumSearchResult)>(StringComparer.Ordinal);
+        private static readonly TtlCache<AlbumSearchResult> AlbumCache =
+            new TtlCache<AlbumSearchResult>(TimeSpan.FromMinutes(30), CacheMaxEntries);
 
         private const int CacheMaxEntries = 500;
-
-        /// <summary>写入前清理:TTL 过期项删除,避免"只增不清理";极端超上限整体清空兜底。</summary>
-        private static void PruneCache<T>(ConcurrentDictionary<string, (DateTime CreatedUtc, T Value)> cache)
-        {
-            var now = DateTime.UtcNow;
-            var expiredKeys = cache.Keys
-                .Where(k => now - cache[k].CreatedUtc > TimeSpan.FromMinutes(30))
-                .ToArray();
-            foreach (var key in expiredKeys)
-            {
-                cache.TryRemove(key, out _);
-            }
-
-            if (cache.Count > CacheMaxEntries)
-            {
-                cache.Clear();
-            }
-        }
 
         public async Task<MetadataResult<Audio>> GetMetadata(
             ItemInfo info,
@@ -151,7 +133,7 @@ namespace MusicStrmExtract.Providers
             try
             {
                 album = await GetAlbumTrackMapAsync(
-                    BuildAlbumCacheKey(albumFolder, artistFolder, localDiscs),
+                    BuildAlbumCacheKey(albumFolder, artistFolder, localDiscs, config),
                     albumFolder,
                     artistFolder,
                     localDiscs,
@@ -250,10 +232,9 @@ namespace MusicStrmExtract.Providers
             PluginConfiguration config,
             CancellationToken ct)
         {
-            if (AlbumCache.TryGetValue(key, out var entry)
-                && DateTime.UtcNow - entry.CreatedUtc < TimeSpan.FromMinutes(30))
+            if (AlbumCache.TryGet(key, out var cached))
             {
-                return entry.Value;
+                return cached;
             }
 
             using var api = new MusicBrainzApi(
@@ -262,8 +243,7 @@ namespace MusicStrmExtract.Providers
             var search = new AlbumSearch(api, coverArt);
             var result = await search.SearchForTrackMapAsync(albumFolder, artistFolder, localDiscs, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
-            PruneCache(AlbumCache);
-            AlbumCache[key] = (DateTime.UtcNow, result);
+            AlbumCache.Set(key, result);
             _logger.Info($"[MusicStrmExtract] [LocalProvider] 专辑定位: '{albumFolder}' -> " +
                 (result.Found
                     ? $"'{result.Title}' releaseMBID={result.ReleaseMbid} 碟数={result.Medias.Count} 轨数={result.Medias.Sum(m => m.Tracks.Count)}"
@@ -271,7 +251,11 @@ namespace MusicStrmExtract.Providers
             return result;
         }
 
-        private static string BuildAlbumCacheKey(string albumFolder, string? artistFolder, List<LocalDisc> localDiscs)
+        private static string BuildAlbumCacheKey(
+            string albumFolder,
+            string? artistFolder,
+            List<LocalDisc> localDiscs,
+            PluginConfiguration config)
         {
             // 对碟组按 DiscNumber 和 TrackNumbers 排序,保证目录枚举非确定性下缓存 Key 稳定
             var layout = string.Join("|", localDiscs
@@ -280,7 +264,15 @@ namespace MusicStrmExtract.Providers
                     (d.DiscNumber?.ToString(CultureInfo.InvariantCulture) ?? "_")
                     + ":"
                     + string.Join("-", d.TrackNumbers.OrderBy(n => n))));
-            return $"{albumFolder}|{artistFolder}|{layout}";
+            var musicBrainzSource = string.IsNullOrWhiteSpace(config.MusicBrainzBaseUrl)
+                ? "official"
+                : config.MusicBrainzBaseUrl.Trim().TrimEnd('/');
+            var coverArtSource = string.IsNullOrWhiteSpace(config.CoverArtBaseUrl)
+                ? "official"
+                : config.CoverArtBaseUrl.Trim().TrimEnd('/');
+
+            // 服务地址也进 key:切换镜像后不应继续命中旧镜像缓存的专辑定位结果。
+            return $"{albumFolder}|{artistFolder}|{layout}|{musicBrainzSource}|{coverArtSource}";
         }
 
         /// <summary>

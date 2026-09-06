@@ -56,6 +56,28 @@ namespace MusicStrmExtract.Tests
         }
 
         [Fact]
+        public async Task SearchForTrackMapAsync_MissingDatesOnBothSides_StillTieBreakByCover()
+        {
+            // 双方同分且都缺完整日期时,ScoreAll 排序并列,仍应收集两个 exact 用 CAA 决胜。
+            var api = new FakeMusicBrainzApi
+            {
+                SearchJson = SearchReleases("rg-1"),
+                RgJson = RgReleases(("noDateA", "US", "AAA", ""), ("noDateB", "US", "AAA", ""))
+            };
+            api.ReleaseDetails["noDateA"] = ReleaseDetail("noDateA", "1989", "US", 13, "");
+            api.ReleaseDetails["noDateB"] = ReleaseDetail("noDateB", "1989", "US", 13, "");
+
+            var cover = new FakeCoverArtClient();
+            cover.Counts["noDateA"] = 3;
+            cover.Counts["noDateB"] = 10009;
+
+            var result = await RunAsync(api, cover);
+
+            Assert.True(result.Found);
+            Assert.Equal("noDateB", result.ReleaseMbid);
+        }
+
+        [Fact]
         public async Task SearchForTrackMapAsync_KeepsPreferredYear_WhenSameScore()
         {
             // 同国、同分、但年份不同:CAA 不应覆盖"年份就近 → 原版优先"的排序意图
@@ -183,12 +205,6 @@ namespace MusicStrmExtract.Tests
                 ReleaseDetailCalls++;
                 return Task.FromResult(Parse(ReleaseDetails.TryGetValue(releaseMbid, out var json) ? json : "{\"media\":[]}"));
             }
-
-            public Task<JsonElement> GetRecordingAsync(string recordingMbid, CancellationToken ct)
-                => Task.FromResult(Parse("{}"));
-
-            public Task<JsonElement> SearchRecordingsAsync(string title, int limit, CancellationToken ct)
-                => Task.FromResult(Parse("{\"recordings\":[]}"));
 
             public void Dispose()
             {

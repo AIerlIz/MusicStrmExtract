@@ -348,9 +348,15 @@ namespace MusicStrmExtract.Online
 
             var candidateYear = ParseYear(GetString(candidate, "date"));
             var baselineYear = ParseYear(GetString(baseline, "date"));
+            if (!candidateYear.HasValue && !baselineYear.HasValue)
+            {
+                // 双方都缺年份时 ScoreAll 的排序键仍并列,应继续用 CAA 决胜。
+                return true;
+            }
+
             if (!candidateYear.HasValue || !baselineYear.HasValue)
             {
-                return false; // 缺年份:ScoreAll 会把"有年份"排前,缺失项不视为并列
+                return false; // 仅一方缺年份:ScoreAll 会把"有年份"排前,缺失项不视为并列
             }
 
             if (Math.Abs(candidateYear.Value - localYear.Value) != Math.Abs(baselineYear.Value - localYear.Value))

@@ -27,21 +27,6 @@ namespace MusicStrmExtract.Online
             _http.DefaultRequestHeaders.UserAgent.ParseAdd(PluginConstants.UserAgent);
         }
 
-        public async Task<JsonElement> GetRecordingAsync(string recordingMbid, CancellationToken ct)
-        {
-            var url = $"{_baseUrl}/ws/2/recording/{Uri.EscapeDataString(recordingMbid)}?inc=releases+artist-credits&fmt=json";
-            return await GetJsonRootAsync(url, ct).ConfigureAwait(false);
-        }
-
-        public async Task<JsonElement> SearchRecordingsAsync(string title, int limit, CancellationToken ct)
-        {
-            var sb = new System.Text.StringBuilder("recording:");
-            sb.Append('"').Append(title.Replace("\"", string.Empty)).Append('"');
-            var query = Uri.EscapeDataString(sb.ToString());
-            var url = $"{_baseUrl}/ws/2/recording?query={query}&fmt=json&limit={limit}";
-            return await GetJsonRootAsync(url, ct).ConfigureAwait(false);
-        }
-
         public async Task<JsonElement> GetReleaseAsync(string releaseMbid, CancellationToken ct)
         {
             var url = $"{_baseUrl}/ws/2/release/{Uri.EscapeDataString(releaseMbid)}?inc=recordings+artist-credits+release-groups&fmt=json";
