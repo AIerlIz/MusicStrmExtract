@@ -11,6 +11,7 @@ namespace MusicStrmExtract.Online
     public sealed class MusicBrainzApi : IMusicBrainzApi
     {
         private const string DefaultBaseUrl = "https://musicbrainz.org";
+        private const int MinimumRequestIntervalMs = 1100;
 
         private static readonly SemaphoreSlim Gate = new SemaphoreSlim(1, 1);
         private static DateTime _lastRequestUtc = DateTime.MinValue;
@@ -61,32 +62,38 @@ namespace MusicStrmExtract.Online
                 using var cachedDoc = JsonDocument.Parse(cached);
                 return cachedDoc.RootElement.Clone();
             }
-            await ThrottleAsync(ct).ConfigureAwait(false);
-            using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new HttpRequestException(
-                    $"MusicBrainz HTTP {(int)response.StatusCode}: {Truncate(body, 200)}",
-                    null,
-                    response.StatusCode);
-            }
-            _responseCache.TryAdd(url, body);
-            using var doc = JsonDocument.Parse(body);
-            return doc.RootElement.Clone();
-        }
 
-        private static async Task ThrottleAsync(CancellationToken ct)
-        {
+            // 锁要覆盖整个请求而不是只覆盖排队:否则两个请求虽然间隔 1.1 秒启动,
+            // 前一个仍可能未结束就并发打向 MusicBrainz,触发 503/429。
             await Gate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
+                var interval = TimeSpan.FromMilliseconds(MinimumRequestIntervalMs);
                 var elapsed = DateTime.UtcNow - _lastRequestUtc;
-                if (elapsed < TimeSpan.FromMilliseconds(1100))
-                    await Task.Delay(TimeSpan.FromMilliseconds(1100) - elapsed, ct).ConfigureAwait(false);
+                if (elapsed < interval)
+                {
+                    await Task.Delay(interval - elapsed, ct).ConfigureAwait(false);
+                }
+
                 _lastRequestUtc = DateTime.UtcNow;
+                using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+                var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new HttpRequestException(
+                        $"MusicBrainz HTTP {(int)response.StatusCode}: {Truncate(body, 200)}",
+                        null,
+                        response.StatusCode);
+                }
+
+                _responseCache.TryAdd(url, body);
+                using var doc = JsonDocument.Parse(body);
+                return doc.RootElement.Clone();
             }
-            finally { Gate.Release(); }
+            finally
+            {
+                Gate.Release();
+            }
         }
 
         private static string Truncate(string value, int max)

@@ -138,6 +138,18 @@ namespace MusicStrmExtract.Tests
             Assert.Equal("other-rg2", result.ReleaseMbid);
         }
 
+        [Theory]
+        [InlineData("Official", 0)]
+        [InlineData("Promotional", 1)]
+        [InlineData("Unknown", 1)]
+        [InlineData("Bootleg", 2)]
+        [InlineData("Withdrawn", 2)]
+        [InlineData("Pseudo-Release", 3)]
+        public void StatusRank_GroupsWithdrawnWithBootleg(string status, int expected)
+        {
+            Assert.Equal(expected, AlbumSearch.StatusRank(status));
+        }
+
         private static async Task<AlbumSearchResult> RunAsync(FakeMusicBrainzApi api, FakeCoverArtClient cover)
         {
             var local = new LocalDisc();

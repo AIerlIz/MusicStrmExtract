@@ -136,8 +136,7 @@ namespace MusicStrmExtract.Online
                     Title = GetString(r, "title"),
                     Date = GetString(r, "date"),
                     Status = GetString(r, "status"),
-                    PrimaryType = GetPrimaryType(r),
-                    Artists = GetArtistCreditNames(r)
+                    PrimaryType = GetPrimaryType(r)
                 })
                 .Where(x => x.Score > 0 && !string.IsNullOrWhiteSpace(x.Title))
                 .ToList();
@@ -151,7 +150,7 @@ namespace MusicStrmExtract.Online
             var preferredCountry = ReleaseGroupScorer.InferPreferredCountry(scored.Select(x => x.Item), localDiscs);
 
             // 本地目录文本已作为查询条件交给 MB,不再做字形过滤;稳定排序只按 MB 元数据:
-            // status(Official 0 < Pseudo-Release 3) -> 主类型 Album -> 完整日期优先 -> 日期最早
+            // status(Official 0 < Promotional/Unknown 1 < Bootleg/Withdrawn 2 < Pseudo-Release 3) -> 主类型 Album -> 完整日期优先 -> 日期最早
             // (空日期排最后)-> score 降序 -> 官方名(字典序)
             var ordered = scored
                 .OrderBy(x => StatusRank(x.Status))
@@ -205,14 +204,7 @@ namespace MusicStrmExtract.Online
                             if (mapping is null) continue;
                             if (HasExactTrackCount(localDiscs, mapping))
                             {
-                                if (exactCandidates.Count == 0)
-                                {
-                                    exactCandidates.Add((release, releaseRoot, medias, score));
-                                }
-                                else
-                                {
-                                    exactCandidates.Add((release, releaseRoot, medias, score));
-                                }
+                                exactCandidates.Add((release, releaseRoot, medias, score));
                             }
                             else
                             {
@@ -567,7 +559,7 @@ namespace MusicStrmExtract.Online
                 .ToList();
         }
 
-        private static int StatusRank(string? status)
+        internal static int StatusRank(string? status)
         {
             if (string.Equals(status, "Official", StringComparison.OrdinalIgnoreCase))
             {
@@ -584,7 +576,8 @@ namespace MusicStrmExtract.Online
                 return 1;
             }
 
-            if (string.Equals(status, "Bootleg", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(status, "Bootleg", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(status, "Withdrawn", StringComparison.OrdinalIgnoreCase))
             {
                 return 2;
             }
