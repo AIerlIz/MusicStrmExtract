@@ -5,6 +5,7 @@
 - HTTP/HTTPS 代理：`<HTTP_PROXY>`
 
 ## Emby Server (端到端测试)
+本仓库不保存测试环境凭据；需要端到端验证时从本地环境或本地配置读取。
 - Emby 地址：`http://localhost:8096/`
 - API Key：`<EMBY_API_KEY>`
 - 管理员用户：`<EMBY_ADMIN_USER>`
@@ -39,7 +40,13 @@
 - 找到首个 exact 后，只继续拉取真正同档的候选用于 CAA 决胜，避免逐个请求整个 release-group 的完整 tracklist。
 - 同分且双方 release 都缺年份/日期时仍属同档，应继续收集并交给 CAA 决胜。
 - 国家偏好只作用于最高基础分档，不能把低状态版本的分数抬到官方版本之上。
+- 搜索候选状态排序与 RG 评分分别在 `AlbumSearch.StatusRank`、`ReleaseGroupScorer.ScoreRelease` 维护；修改状态优先级时保持两处语义一致，并同步 `AlbumSearchSelectionTests` 和 `ReleaseGroupScorerTests`。
 - 修改这些排序、提前返回或断点逻辑时，同步维护 `AlbumSearchSelectionTests` 和 `ReleaseGroupScorerTests`。
+
+### MusicBrainz 限流
+- `MusicBrainzApi` 的静态信号量覆盖“间隔等待 + 完整 HTTP 请求”，避免上一请求未结束时并发打向 MusicBrainz。
+- 请求间隔常量为 `MinimumRequestIntervalMs`（1100ms）；不要改回“只锁等待间隔、释放后再发请求”的实现。
+- 涉及新增 MusicBrainz 请求入口时统一走 `GetJsonRootAsync`，不要绕过缓存与限流直接发 `HttpClient`。
 
 ### 发版与验证
 - 项目版本号需要手动同步：发新 tag 前更新 `MusicStrmExtract.csproj` 的 `Version`、`AssemblyVersion`、`FileVersion`。当前已同步为 `1.6.0.0`。

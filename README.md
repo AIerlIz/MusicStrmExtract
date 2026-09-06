@@ -86,8 +86,9 @@ Music Strm Extract 是一个 Emby 插件，给音乐库里的 `.strm` 音频补�
 - 按轨号从官方 tracklist 取回标题、歌手、专辑、年份、轨号、碟号和 MusicBrainz IDs。
 - 评论轨沿用官方曲名，并在标题后保留 `(Commentary)`。
 - 候选版本优先匹配“本地轨数与 MusicBrainz media 轨数完全一致”的版本；没有完全一致时，退回轨号覆盖匹配，避免普通版被豪华版抢走。
+- 同一 release-group 存在多个国家/介质版本时，会比较本地年份与发行年份、实体条码、CD 格式、官方状态和多数国家；残余同档用 Cover Art Archive 封面数决胜。
 - 自动建立或修正 Audio、MusicAlbum、MusicArtist 的归属关系。
-- 封面由 Emby 从 Cover Art Archive 下载，不需要手写 `cover.jpg`。
+- 封面由 Emby 从配置的 Cover Art Archive 地址下载，不需要手写 `cover.jpg`。
 
 ## 配置
 
@@ -98,7 +99,7 @@ Music Strm Extract 是一个 Emby 插件，给音乐库里的 `.strm` 音频补�
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
 | `MusicBrainzBaseUrl` | 空 | MusicBrainz 服务地址。留空使用官方 `https://musicbrainz.org`；官方不稳定时可填写镜像，例如 `https://musicbrainz.emby.tv` |
-| `CoverArtBaseUrl` | 空 | Cover Art Archive 服务地址。留空使用官方 `https://coverartarchive.org/release/`；网络受限时可填写镜像地址，需以 `/` 或 `/release` 结尾 |
+| `CoverArtBaseUrl` | 空 | Cover Art Archive 服务地址，同时用于选版时查询封面数和给 Emby 的封面下载 URL。留空使用官方 `https://coverartarchive.org/release/`；网络受限时可填写镜像地址，需以 `/` 或 `/release` 结尾 |
 
 ## 首次使用
 
