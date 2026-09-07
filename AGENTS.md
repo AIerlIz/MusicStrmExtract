@@ -41,7 +41,7 @@
 - `AlbumSearch.SearchForTrackMapAsync` 会先检查 top-1 候选所在的 release-group；若当前 RG 没有轨数完全一致的 exact 命中，会继续检查搜索候选里其它 RG 的精确命中。
 - 找到首个 exact 后，只继续拉取真正同档的候选用于 CAA 决胜，避免逐个请求整个 release-group 的完整 tracklist。
 - 同分且双方 release 都缺年份/日期时仍属同档，应继续收集并交给 CAA 决胜。
-- 国家偏好只作用于最高基础分档，不能把低状态版本的分数抬到官方版本之上。
+- 国家偏好只加给“官方状态且与偏好国家一致”的候选，不能把 Bootleg/Pseudo/Withdrawn 的低状态版本抬到官方版本之上。
 - 搜索候选状态排序与 RG 评分统一在 `ReleaseStatusPolicy.SearchPriority` / `ScoreWeight` 维护，不要另写一套字符串分类；修改优先级时同步 `ReleaseStatusPolicyTests`、`AlbumSearchSelectionTests` 和 `ReleaseGroupScorerTests`。
 - 修改这些排序、提前返回或断点逻辑时，同步维护 `AlbumSearchSelectionTests` 和 `ReleaseGroupScorerTests`。
 

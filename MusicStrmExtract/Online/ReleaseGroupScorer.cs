@@ -6,27 +6,30 @@ using static MusicStrmExtract.Online.JsonUtil;
 namespace MusicStrmExtract.Online
 {
     /// <summary>
-    /// 对同 release-group 下的多个 release 进行加权评分，选出最合适的版本。
+    /// 对同 release-group 下的多个 release 进行分层排序。
+    /// 排序维度依次是:状态层、偏好国家层、年份贴近层、日期、同层质量分。
     /// </summary>
     public static class ReleaseGroupScorer
     {
         private const int BarcodePresentWeight = 30;
         private const int BarcodeFrequencyPerOccurrence = 5;
-        private const int BarcodeFrequencyMax = 50;
+        private const int BarcodeFrequencyMax = 25;
         private const int CompleteDateWeight = 10;
         private const int CdFormatWeight = 8;
         private const int JewelCaseWeight = 5;
-        private const int DisambiguationEmptyWeight = 5;
-        private const int PreferredCountryWeight = 500;
+        private const int DisambiguationEmptyWeight = 10;
+
+        private const long StatusRankBase = 1_000_000_000_000L;
+        private const long PreferredCountryRankBase = 100_000_000_000L;
+        private const int MissingYearDistance = 9999;
 
         /// <summary>
-        /// 对同 RG 下所有 release 评分并排序。
-        /// 主排序：总分降序；次级：本地年份与 release date 年份就近（差值绝对值小者优先）。
+        /// 对同 RG 下所有 release 分层排序。
         /// </summary>
         /// <param name="releases">同 release-group 的全部候选。</param>
         /// <param name="localYear">本地目录名解析出的年份（如 "七里香 (2004)" → 2004）；null 表示无年份，跳过就近排序。</param>
         /// <param name="preferredCountry">自动推断出的偏好国家（ISO 3166-1 alpha-2）；
-        /// 只在最高基础分档内参与决胜，null 表示不启用国家加权。</param>
+        /// 只给官方状态且地区匹配的候选加国家层，null 表示不启用国家加权。</param>
         public static List<RankedRelease> ScoreAll(
             IReadOnlyList<ReleaseSummary> releases,
             int? localYear = null,
@@ -41,64 +44,37 @@ namespace MusicStrmExtract.Online
             var barcodeCounts = CountBarcodes(releases);
             foreach (var release in releases)
             {
-                result.Add(new RankedRelease(release, ScoreRelease(release, barcodeCounts)));
-            }
-
-            // 偏好国家只在最高基础分档内生效:低于最高档的 Bootleg/Pseudo-Release
-            // 即使来自偏好国家也不能靠大权重反超更可信的官方版本。
-            if (!string.IsNullOrWhiteSpace(preferredCountry) && result.Count > 0)
-            {
-                var maxBase = result.Max(x => x.Score);
-                for (var i = 0; i < result.Count; i++)
-                {
-                    if (result[i].Score != maxBase)
-                    {
-                        continue;
-                    }
-
-                    if (string.Equals(result[i].Release.Country, preferredCountry, StringComparison.OrdinalIgnoreCase))
-                    {
-                        result[i] = result[i] with { Score = result[i].Score + PreferredCountryWeight };
-                    }
-                }
+                result.Add(new RankedRelease(
+                    release,
+                    ScoreRelease(release, barcodeCounts),
+                    BuildRank(release, localYear, preferredCountry)));
             }
 
             if (localYear.HasValue)
             {
                 result.Sort((a, b) =>
                 {
-                    var cmp = b.Score.CompareTo(a.Score);
+                    var cmp = a.Rank.CompareTo(b.Rank);
                     if (cmp != 0)
                     {
                         return cmp;
                     }
 
-                    var ya = GetYear(a.Release);
-                    var yb = GetYear(b.Release);
-                    if (ya.HasValue && yb.HasValue)
-                    {
-                        var da = Math.Abs(ya.Value - localYear.Value);
-                        var db = Math.Abs(yb.Value - localYear.Value);
-                        cmp = da.CompareTo(db);
-                        if (cmp != 0)
-                        {
-                            return cmp;
-                        }
-
-                        // 年份差值相同，日期更早者优先（首发原版胜出）
-                        return string.Compare(
-                            a.Release.Date ?? "9999",
-                            b.Release.Date ?? "9999",
-                            StringComparison.Ordinal);
-                    }
-
-                    // 有年份的排在无年份前面
-                    return ya.HasValue ? -1 : yb.HasValue ? 1 : 0;
+                    // 年份贴近相同(如 2004 vs 2006,本地 2005)时,日期更早者优先(首发原版胜出)
+                    cmp = string.Compare(
+                        a.Release.Date ?? "9999",
+                        b.Release.Date ?? "9999",
+                        StringComparison.Ordinal);
+                    return cmp != 0 ? cmp : b.Score.CompareTo(a.Score);
                 });
             }
             else
             {
-                result.Sort((a, b) => b.Score.CompareTo(a.Score));
+                result.Sort((a, b) =>
+                {
+                    var cmp = a.Rank.CompareTo(b.Rank);
+                    return cmp != 0 ? cmp : b.Score.CompareTo(a.Score);
+                });
             }
 
             return result;
@@ -148,17 +124,15 @@ namespace MusicStrmExtract.Online
         }
 
         /// <summary>
-        /// 两个 release 是否在 ScoreAll 的排序键下真正并列(同分 + 同年份就近 + 同日期);
-        /// 无本地年份时 ScoreAll 只按分排序,同分即同级、可交给 CAA 决胜。
+        /// 两个候选是否处于同一排序层(同状态/国家/年份贴近)且质量分与日期一致;
+        /// 只有这样的残余并列才允许交给 CAA 决胜。
         /// </summary>
         internal static bool AreInSameRankingTier(
-            ReleaseSummary first,
-            ReleaseSummary second,
-            int firstScore,
-            int secondScore,
+            RankedRelease first,
+            RankedRelease second,
             int? localYear)
         {
-            if (firstScore != secondScore)
+            if (first.Rank != second.Rank || first.Score != second.Score)
             {
                 return false;
             }
@@ -168,28 +142,35 @@ namespace MusicStrmExtract.Online
                 return true;
             }
 
-            var firstYear = GetYear(first);
-            var secondYear = GetYear(second);
-            if (!firstYear.HasValue && !secondYear.HasValue)
-            {
-                // 双方都缺年份时 ScoreAll 的排序键仍并列,应继续用 CAA 决胜。
-                return true;
-            }
-
-            if (!firstYear.HasValue || !secondYear.HasValue)
-            {
-                return false; // 仅一方缺年份:ScoreAll 会把"有年份"排前,缺失项不视为并列
-            }
-
-            if (Math.Abs(firstYear.Value - localYear.Value) != Math.Abs(secondYear.Value - localYear.Value))
-            {
-                return false;
-            }
-
             return string.Equals(
-                first.Date ?? "9999",
-                second.Date ?? "9999",
+                first.Release.Date ?? "9999",
+                second.Release.Date ?? "9999",
                 StringComparison.Ordinal);
+        }
+
+        private static long BuildRank(
+            ReleaseSummary release,
+            int? localYear,
+            string? preferredCountry)
+        {
+            var rank = ReleaseStatusPolicy.SearchPriority(release.Status) * StatusRankBase;
+            if (!string.IsNullOrWhiteSpace(preferredCountry)
+                && ReleaseStatusPolicy.IsOfficial(release.Status)
+                && !string.Equals(release.Country, preferredCountry, StringComparison.OrdinalIgnoreCase))
+            {
+                // 偏好国家的官方版先于其它国家的官方版,但不跨越状态层。
+                rank += PreferredCountryRankBase;
+            }
+
+            if (localYear.HasValue)
+            {
+                var releaseYear = ParseLeadingYear(release.Date);
+                rank += releaseYear.HasValue
+                    ? Math.Min(Math.Abs(releaseYear.Value - localYear.Value), MissingYearDistance)
+                    : MissingYearDistance;
+            }
+
+            return rank;
         }
 
         /// <summary>release 的 media 布局是否与本地碟组完全一致(逐碟 track-count 相等)。</summary>
@@ -273,11 +254,6 @@ namespace MusicStrmExtract.Online
         {
             return release.Media.Any(m =>
                 string.Equals(m.Format, "CD", StringComparison.OrdinalIgnoreCase));
-        }
-
-        private static int? GetYear(ReleaseSummary release)
-        {
-            return ParseLeadingYear(release.Date);
         }
     }
 }

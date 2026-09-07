@@ -162,6 +162,21 @@ namespace MusicStrmExtract.Tests
         }
 
         [Fact]
+        public void ScoreAll_YearProximity_EarlierDateWinsBeforeMinorQualityBonus()
+        {
+            // 2004 原版带歧义描述,2006 再版无歧义且完整日期齐全;
+            // 年份贴近相同层内应仍先比日期,不能被质量分把再版抬到原版前。
+            var rg = BuildRgJson(
+                ("late", "Official", "ABC", "US", "2006-03-15", true, null),
+                ("early", "Official", "ABC", "US", "2004-08-03", true, "Sony DADC")
+            );
+
+            var scored = ReleaseGroupScorer.ScoreAll(rg, localYear: 2005);
+
+            Assert.Equal("early", scored[0].Release.Id);
+        }
+
+        [Fact]
         public void ScoreAll_YearProximity_NoYear_StillSortsByScore()
         {
             // localYear=null 时仅按分数排序，不做年份就近
@@ -215,7 +230,7 @@ namespace MusicStrmExtract.Tests
             );
             var withUs = ReleaseGroupScorer.ScoreAll(rg, preferredCountry: "US");
             Assert.Equal("us", withUs[0].Release.Id);
-            Assert.True(withUs[0].Score > withUs[1].Score);
+            Assert.True(withUs[0].Rank < withUs[1].Rank);
         }
 
         [Fact]
@@ -230,6 +245,31 @@ namespace MusicStrmExtract.Tests
 
             Assert.Equal("official", scored[0].Release.Id);
             Assert.True(scored[0].Score > scored[1].Score);
+        }
+
+        [Fact]
+        public void ScoreAll_PreferredCountry_OutranksForeignOfficialWithHigherBarcodeFrequency()
+        {
+            // 同一实体版的高频条码覆盖多个国家,但 US 仍是多数国家;
+            // 国家偏好应选 US 官方版,不能被国外高频条码的频次加分压过。
+            var rg = BuildRgJson(
+                ("ar", "Official", "COMMON", "AR", "2014-10-27", true, null),
+                ("au", "Official", "COMMON", "AU", "2014-10-27", true, null),
+                ("bg", "Official", "COMMON", "BG", "2014-10-27", true, null),
+                ("cl", "Official", "COMMON", "CL", "2014-10-27", true, null),
+                ("xe", "Official", "COMMON", "XE", "2014-10-27", true, null),
+                ("us1", "Official", "843930013500", "US", "2014-10-27", true, null),
+                ("us2", "Official", "843930013500", "US", "2014-10-27", true, null),
+                ("us3", "Official", "843930013500", "US", "2014-10-27", true, null)
+            );
+            var local = new LocalDisc();
+            local.TrackNumbers.AddRange(Enumerable.Range(1, 13));
+
+            var preferredCountry = ReleaseGroupScorer.InferPreferredCountry(rg, new[] { local });
+            var scored = ReleaseGroupScorer.ScoreAll(rg, preferredCountry: preferredCountry);
+
+            Assert.Equal("US", preferredCountry);
+            Assert.Contains(scored[0].Release.Id, new[] { "us1", "us2", "us3" });
         }
 
         [Fact]

@@ -30,8 +30,11 @@ namespace MusicStrmExtract.Online
     /// <summary>带 MusicBrainz 搜索分的候选。</summary>
     public sealed record ScoredRelease(ReleaseSummary Release, int Score);
 
-    /// <summary>带 RG 加权评分的候选。</summary>
-    public sealed record RankedRelease(ReleaseSummary Release, int Score);
+    /// <summary>
+    /// 带 RG 排序键与质量分的候选。
+    /// Rank 表示"状态 -> 国家偏好 -> 年份贴近"的层级,Score 只表示同层内的实体质量。
+    /// </summary>
+    public sealed record RankedRelease(ReleaseSummary Release, int Score, long Rank);
 
     /// <summary>release 详情解析结果:强类型元数据 + 可映射的 media 轨道。</summary>
     public sealed record ParsedRelease(ReleaseSummary Release, IReadOnlyList<ReleaseMedia> Medias);

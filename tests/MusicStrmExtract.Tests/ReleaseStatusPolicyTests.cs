@@ -24,7 +24,7 @@ namespace MusicStrmExtract.Tests
         [InlineData("Unknown", 0)]
         [InlineData("Bootleg", -40)]
         [InlineData("Withdrawn", -40)]
-        [InlineData("Pseudo-Release", -10)]
+        [InlineData("Pseudo-Release", -60)]
         public void ScoreWeight_MatchesReleaseGroupScoring(string status, int expected)
         {
             Assert.Equal(expected, ReleaseStatusPolicy.ScoreWeight(status));

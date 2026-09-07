@@ -49,14 +49,14 @@ namespace MusicStrmExtract.Online
             };
         }
 
-        /// <summary>RG 评分中的状态加权；Official 为正，Bootleg/Withdrawn 为负，Pseudo 轻微负。</summary>
+        /// <summary>RG 评分中的状态加权；Official 为正，Pseudo 低于 Bootleg/Withdrawn。</summary>
         public static int ScoreWeight(string? status)
         {
             return Classify(status) switch
             {
                 ReleaseStatusTier.Official => 40,
                 ReleaseStatusTier.BootlegOrWithdrawn => -40,
-                ReleaseStatusTier.PseudoRelease => -10,
+                ReleaseStatusTier.PseudoRelease => -60,
                 _ => 0
             };
         }

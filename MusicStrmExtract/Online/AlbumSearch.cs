@@ -159,10 +159,8 @@ namespace MusicStrmExtract.Online
                     // 已找到首个 exact 后,只有真正同档的候选才值得继续拉详情做 CAA 决胜。
                     if (exactCandidates.Count > 0
                         && !ReleaseGroupScorer.AreInSameRankingTier(
-                            release,
-                            exactCandidates[0].Release,
-                            rankedRelease.Score,
-                            exactCandidates[0].Score,
+                            rankedRelease,
+                            exactCandidates[0].Ranked,
                             localYear))
                     {
                         break;
@@ -182,7 +180,7 @@ namespace MusicStrmExtract.Online
 
                     if (ReleaseLayoutMatcher.HasExactTrackCount(localDiscs, mapping))
                     {
-                        exactCandidates.Add(new ExactCandidate(release, parsed, rankedRelease.Score));
+                        exactCandidates.Add(new ExactCandidate(rankedRelease, parsed));
                     }
                     else
                     {
@@ -329,6 +327,6 @@ namespace MusicStrmExtract.Online
             public string? FirstFallbackMbid { get; set; }
         }
 
-        private sealed record ExactCandidate(ReleaseSummary Release, ParsedRelease Parsed, int Score);
+        private sealed record ExactCandidate(RankedRelease Ranked, ParsedRelease Parsed);
     }
 }
