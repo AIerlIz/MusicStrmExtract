@@ -55,13 +55,13 @@ namespace MusicStrmExtract.Online
                 await GetJsonRootAsync(url, ct).ConfigureAwait(false));
         }
 
-        /// <summary>按 release-group MBID 获取该组全部 release(最多 50 条),用于多版本加权选版。
-        /// inc=releases+media 使每个 release 附带 media(格式/轨数),供评分使用。</summary>
-        public async Task<IReadOnlyList<ReleaseSummary>> GetReleaseGroupReleasesAsync(
+        /// <summary>按 release-group MBID 获取专辑概念及该组全部 release,用于组内多版本选版。
+        /// inc=releases+media+artist-credits 同时带回 release 布局、组级与 release 级艺人信息。</summary>
+        public async Task<ParsedReleaseGroup> GetReleaseGroupAsync(
             string rgMbid,
             CancellationToken ct)
         {
-            var url = $"{_baseUrl}/ws/2/release-group/{Uri.EscapeDataString(rgMbid)}?inc=releases+media&fmt=json";
+            var url = $"{_baseUrl}/ws/2/release-group/{Uri.EscapeDataString(rgMbid)}?inc=releases+media+artist-credits&fmt=json";
             return ReleaseJsonReader.ParseReleaseGroup(
                 await GetJsonRootAsync(url, ct).ConfigureAwait(false));
         }

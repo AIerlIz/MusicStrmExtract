@@ -12,6 +12,6 @@ namespace MusicStrmExtract.Online
 
         Task<IReadOnlyList<ScoredRelease>> SearchReleasesAsync(string album, string? artist, int limit, CancellationToken ct);
 
-        Task<IReadOnlyList<ReleaseSummary>> GetReleaseGroupReleasesAsync(string rgMbid, CancellationToken ct);
+        Task<ParsedReleaseGroup> GetReleaseGroupAsync(string rgMbid, CancellationToken ct);
     }
 }

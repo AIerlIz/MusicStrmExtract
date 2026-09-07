@@ -31,25 +31,39 @@ namespace MusicStrmExtract.Online
             return result;
         }
 
-        public static List<ReleaseSummary> ParseReleaseGroup(JsonElement root)
+        public static ParsedReleaseGroup ParseReleaseGroup(JsonElement root)
         {
             var result = new List<ReleaseSummary>();
-            if (root.ValueKind != JsonValueKind.Object
-                || !root.TryGetProperty("releases", out var releases)
-                || releases.ValueKind != JsonValueKind.Array)
+            if (root.ValueKind != JsonValueKind.Object)
             {
-                return result;
+                return new ParsedReleaseGroup(
+                    null,
+                    null,
+                    null,
+                    null,
+                    Array.Empty<ArtistCredit>(),
+                    result);
             }
 
-            foreach (var release in releases.EnumerateArray())
+            if (root.TryGetProperty("releases", out var releases)
+                && releases.ValueKind == JsonValueKind.Array)
             {
-                if (release.ValueKind == JsonValueKind.Object)
+                foreach (var release in releases.EnumerateArray())
                 {
-                    result.Add(ParseRelease(release));
+                    if (release.ValueKind == JsonValueKind.Object)
+                    {
+                        result.Add(ParseRelease(release));
+                    }
                 }
             }
 
-            return result;
+            return new ParsedReleaseGroup(
+                GetString(root, "id"),
+                GetString(root, "title"),
+                GetString(root, "primary-type"),
+                GetString(root, "disambiguation"),
+                GetArtistCredits(root, includeNameOnlyCredits: true),
+                result);
         }
 
         public static ReleaseSummary ParseRelease(JsonElement release)

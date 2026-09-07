@@ -20,7 +20,7 @@ namespace MusicStrmExtract.Providers
     /// <summary>
     /// 标准本地元数据读取器(ILocalMetadataProvider):Emby 在扫描/刷新 Audio 条目时调用。
     /// 只保留主路径·专辑轨道定位:文件名只解析数字轨号,扫描专辑文件夹得到本地轨号集合;
-    /// 按艺人 + 专辑文件夹名查询 MB release,用轨号覆盖选择 media,再按轨号直接取 tracklist
+    /// 按艺人 + 专辑文件夹名定位 MB release-group,再在该组内按本地轨号覆盖选择 release media,按轨号直接取 tracklist
     /// 数据(recording MBID/标题/艺人),整张专辑一次定位并缓存;不做远程探测、不做文件名文本匹配。
     /// 未命中的条目返回空结果,由 Emby 后续流程决定是否保持现状或做其它在线补全。
     /// 命中时不直接写库:返回的 Audio 带 Album/AlbumArtists/MBID,由 Emby 合并保存并自动

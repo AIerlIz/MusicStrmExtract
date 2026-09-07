@@ -38,7 +38,9 @@ namespace MusicStrmExtract.Tests
         public void ParseReleaseGroup_ReadsMediaLayoutAndScoringFields()
         {
             var root = JsonDocument.Parse(
-                "{\"releases\":[{" +
+                "{\"id\":\"rg-1\",\"title\":\"1989\",\"primary-type\":\"Album\"," +
+                "\"artist-credit\":[{\"artist\":{\"id\":\"artist-1\",\"name\":\"Taylor Swift\"}}]," +
+                "\"releases\":[{" +
                 "\"id\":\"us\",\"title\":\"1989\",\"date\":\"2014-10-27\",\"status\":\"Official\"," +
                 "\"country\":\"US\",\"barcode\":\"123\",\"packaging\":\"Jewel Case\"," +
                 "\"disambiguation\":null,\"media\":[{\"position\":1,\"format\":\"CD\",\"track-count\":13}]}," +
@@ -47,8 +49,13 @@ namespace MusicStrmExtract.Tests
                 "\"disambiguation\":\"MOINS CHER\",\"media\":[{\"position\":1,\"format\":\"CD\",\"track-count\":13}]}" +
                 "]}").RootElement;
 
-            var releases = ReleaseJsonReader.ParseReleaseGroup(root);
+            var group = ReleaseJsonReader.ParseReleaseGroup(root);
+            var releases = group.Releases;
 
+            Assert.Equal("rg-1", group.Id);
+            Assert.Equal("1989", group.Title);
+            Assert.Equal("Album", group.PrimaryType);
+            Assert.Equal("Taylor Swift", group.ArtistCredits.Single().Name);
             Assert.Equal(2, releases.Count);
             Assert.Equal("Jewel Case", releases[0].Packaging);
             Assert.Null(releases[0].Disambiguation);

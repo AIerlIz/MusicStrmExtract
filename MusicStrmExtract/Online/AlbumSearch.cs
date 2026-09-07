@@ -10,9 +10,11 @@ using System.Threading.Tasks;
 namespace MusicStrmExtract.Online
 {
     /// <summary>
-    /// "按艺人 + 专辑文件夹名锁定 MusicBrainz release":把专辑文件夹名(如 "叶惠美 (2003)")净化成核心名("叶惠美"),
-    /// 用 release:"专辑" AND artist:"艺人" 查询候选 release,再按本地碟组(碟号+轨号)校验每个候选的 media 布局,
-    /// 返回首个布局匹配的 release 的完整轨道映射(每轨 recording MBID/标题)——单曲按碟号+轨号取数。
+    /// "按艺人 + 专辑文件夹名定位 release-group(专辑概念),再从该组选择对应 release(可购买发行版本)":
+    /// 先把专辑文件夹名(如 "叶惠美 (2003)")净化成核心名("叶惠美"),
+    /// 用 release:"专辑" AND artist:"艺人" 查询候选 release 以反查 release-group(每个 release 只属于一个 RG),
+    /// 再按本地碟组(碟号+轨号)校验组内各 release 的 media 布局,
+    /// 返回命中 release 的完整轨道映射(每轨 recording MBID/标题)——单曲按碟号+轨号取数。
     /// 目录名原样透传给 MusicBrainz,不参与本地文本比较;候选顺序稳定(Official 优先 → Album 主类型 → 完整日期优先 → score)。
     /// </summary>
     public sealed class AlbumSearch
@@ -44,7 +46,8 @@ namespace MusicStrmExtract.Online
         }
 
         /// <summary>
-        /// 专辑轨道映射搜索:搜索候选 release + 取各自 tracklist + 本地碟组指纹校验选碟。
+        /// 专辑轨道映射搜索:通过候选 release 定位其 release-group,再从组内 release 按本地指纹选实体版本;
+        /// top-1 RG 无精确命中时保留搜索回退(其它 RG 的精确版本可能是 top-1 命错专辑的纠错)。
         /// 未找到 release、或候选 release 的 media 布局均不匹配本地碟组时返回 Found=false
         /// (调用方按未命中处理)。
         /// </summary>
@@ -80,7 +83,7 @@ namespace MusicStrmExtract.Online
             var ordered = OrderSearchCandidates(scored, preferredCountry);
             var state = new SearchState();
 
-            // 尝试用 release-group 全量加权评分选出最优版本;没有 exact 时保留已看到的布局候选,
+            // 尝试用 release-group(专辑概念)下的全部 release 分层评分选出最优实体版本;没有 exact 时保留已看到的布局候选,
             // 继续走搜索回退路径,避免当前 RG 无精确版本时错过其它 RG 的精确命中。
             var rgResult = await TryResolveFromReleaseGroupAsync(
                 ordered[0],
@@ -118,7 +121,7 @@ namespace MusicStrmExtract.Online
         }
 
         /// <summary>
-        /// RG 加权路径:从 top-1 候选取 release-group-id,拉取该 RG 下全部 release 评分;
+        /// RG 加权路径:从 top-1 候选取 release-group-id,拉取专辑概念下全部 release 评分;
         /// 只收集顶级分数档的精确命中并交给 CAA 决胜。失败或没有 exact 时返回 null 走搜索回退。
         /// </summary>
         private async Task<AlbumSearchResult?> TryResolveFromReleaseGroupAsync(
@@ -136,15 +139,15 @@ namespace MusicStrmExtract.Online
 
             try
             {
-                var rgReleases = await _api.GetReleaseGroupReleasesAsync(topRgMbid, ct).ConfigureAwait(false);
-                if (rgReleases.Count <= 1)
+                var rg = await _api.GetReleaseGroupAsync(topRgMbid, ct).ConfigureAwait(false);
+                if (rg.Releases.Count <= 1)
                 {
                     return null;
                 }
 
                 // 从 RG 全量候选推断偏好国家(比搜索样本更准),并传给评分
-                var rgPreferredCountry = ReleaseGroupScorer.InferPreferredCountry(rgReleases, localDiscs);
-                var ranked = ReleaseGroupScorer.ScoreAll(rgReleases, localYear, rgPreferredCountry);
+                var rgPreferredCountry = ReleaseGroupScorer.InferPreferredCountry(rg.Releases, localDiscs);
+                var ranked = ReleaseGroupScorer.ScoreAll(rg.Releases, localYear, rgPreferredCountry);
 
                 // 顶级分数档之外的命中不可能靠封面数胜出,无需继续收集(有界 CAA 请求)。
                 var exactCandidates = new List<ExactCandidate>();
@@ -184,13 +187,13 @@ namespace MusicStrmExtract.Online
                     }
                     else
                     {
-                        SetFallback(state, parsed.Release, parsed.Medias);
+                        SetFallback(state, rg, parsed.Release, parsed.Medias);
                     }
                 }
 
                 if (exactCandidates.Count > 0)
                 {
-                    return await PickExactByCoverAsync(exactCandidates, ct).ConfigureAwait(false);
+                    return await PickExactByCoverAsync(exactCandidates, rg, ct).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -244,10 +247,10 @@ namespace MusicStrmExtract.Online
 
                 if (ReleaseLayoutMatcher.HasExactTrackCount(localDiscs, mapping))
                 {
-                    return BuildAlbumResult(parsed.Release, parsed.Medias);
+                    return BuildAlbumResult(parsed.Release, parsed.Medias, null);
                 }
 
-                SetFallback(state, parsed.Release, parsed.Medias);
+                SetFallback(state, null, parsed.Release, parsed.Medias);
             }
 
             return state.FirstFallback ?? AlbumSearchResult.Empty;
@@ -255,18 +258,22 @@ namespace MusicStrmExtract.Online
 
         private static AlbumSearchResult BuildAlbumResult(
             ReleaseSummary release,
-            IReadOnlyList<ReleaseMedia> medias)
+            IReadOnlyList<ReleaseMedia> medias,
+            ParsedReleaseGroup? releaseGroup)
         {
+            var artistCredits = release.ArtistCredits.Count > 0
+                ? release.ArtistCredits
+                : releaseGroup?.ArtistCredits ?? Array.Empty<ArtistCredit>();
             return new AlbumSearchResult(
                 true,
-                release.Title,
+                release.Title ?? releaseGroup?.Title,
                 JsonUtil.ParseYear(release.Date),
                 release.Id,
-                release.ReleaseGroupMbid,
-                release.ArtistCredits
+                release.ReleaseGroupMbid ?? releaseGroup?.Id,
+                artistCredits
                     .Select(c => c.Name)
                     .FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)),
-                release.ArtistCredits
+                artistCredits
                     .Select(c => c.Id)
                     .FirstOrDefault(id => !string.IsNullOrWhiteSpace(id)),
                 medias.ToArray());
@@ -274,6 +281,7 @@ namespace MusicStrmExtract.Online
 
         private static void SetFallback(
             SearchState state,
+            ParsedReleaseGroup? releaseGroup,
             ReleaseSummary release,
             IReadOnlyList<ReleaseMedia> medias)
         {
@@ -282,18 +290,22 @@ namespace MusicStrmExtract.Online
                 return;
             }
 
-            state.FirstFallback = BuildAlbumResult(release, medias);
+            state.FirstFallback = BuildAlbumResult(release, medias, releaseGroup);
             state.FirstFallbackMbid = release.Id;
         }
 
         /// <summary>在顶级分数档的精确命中候选中,用 Cover Art Archive 封面数打破残余并列;单候选直接返回。</summary>
         private async Task<AlbumSearchResult> PickExactByCoverAsync(
             List<ExactCandidate> candidates,
+            ParsedReleaseGroup releaseGroup,
             CancellationToken ct)
         {
             if (candidates.Count == 1)
             {
-                return BuildAlbumResult(candidates[0].Parsed.Release, candidates[0].Parsed.Medias);
+                return BuildAlbumResult(
+                    candidates[0].Parsed.Release,
+                    candidates[0].Parsed.Medias,
+                    releaseGroup);
             }
 
             AlbumSearchResult? best = null;
@@ -304,7 +316,10 @@ namespace MusicStrmExtract.Online
                 var cover = string.IsNullOrWhiteSpace(mbid)
                     ? 0
                     : await _coverArtClient.GetCoverArtCountAsync(mbid, ct).ConfigureAwait(false);
-                var built = BuildAlbumResult(candidate.Parsed.Release, candidate.Parsed.Medias);
+                var built = BuildAlbumResult(
+                    candidate.Parsed.Release,
+                    candidate.Parsed.Medias,
+                    releaseGroup);
                 if (best is null || cover > bestCover)
                 {
                     best = built;

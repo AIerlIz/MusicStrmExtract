@@ -38,6 +38,7 @@
 - 页面新增按钮时，确认 `ButtonItem.CommandId` 与 `MusicStrmPageView.RunCommand` 的分支一致。
 
 ### RG 选版与请求收敛
+- `AlbumSearch.SearchForTrackMapAsync` 把专辑文件夹先定位为 release-group（专辑概念），再从该组 release（可购买发行版本）中选实体版本；`MusicBrainzApi.GetReleaseGroupAsync` 返回 `ParsedReleaseGroup`，组级 ID/艺人信息要传给最终结果，不能只依赖 release 详情里碰巧带出的嵌套字段。
 - `AlbumSearch.SearchForTrackMapAsync` 会先检查 top-1 候选所在的 release-group；若当前 RG 没有轨数完全一致的 exact 命中，会继续检查搜索候选里其它 RG 的精确命中。
 - 找到首个 exact 后，只继续拉取真正同档的候选用于 CAA 决胜，避免逐个请求整个 release-group 的完整 tracklist。
 - 同分且双方 release 都缺年份/日期时仍属同档，应继续收集并交给 CAA 决胜。

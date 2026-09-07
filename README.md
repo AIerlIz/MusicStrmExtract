@@ -81,7 +81,7 @@ Music Strm Extract 是一个 Emby 插件，给音乐库里的 `.strm` 音频补�
 
 ## 插件会自动做什么
 
-- 扫描或刷新时，根据“歌手文件夹 + 专辑文件夹”锁定 MusicBrainz release。
+- 扫描或刷新时，根据“歌手文件夹 + 专辑文件夹”先定位 MusicBrainz release-group（专辑概念），再在同组 release（可购买的发行版本）中选择版本。
 - 整张专辑只查询一次，之后 30 分钟内命中缓存，不重复请求 MusicBrainz。
 - 按轨号从官方 tracklist 取回标题、歌手、专辑、年份、轨号、碟号和 MusicBrainz IDs。
 - 评论轨沿用官方曲名，并在标题后保留 `(Commentary)`。

@@ -31,6 +31,8 @@ namespace MusicStrmExtract.Tests
 
             Assert.True(result.Found);
             Assert.Contains(result.ReleaseMbid, new[] { "us1", "us2" });
+            Assert.Equal("rg-1", result.ReleaseGroupMbid);
+            Assert.Equal("Artist", result.ArtistName);
         }
 
         [Fact]
@@ -160,7 +162,9 @@ namespace MusicStrmExtract.Tests
 
         private static string RgReleases(params (string Id, string Country, string Barcode, string Date)[] releases)
         {
-            var sb = new System.Text.StringBuilder("{\"releases\":[");
+            var sb = new System.Text.StringBuilder(
+                "{\"id\":\"rg-1\",\"title\":\"1989\",\"primary-type\":\"Album\"," +
+                "\"artist-credit\":[{\"artist\":{\"id\":\"art-1\",\"name\":\"Artist\"}}],\"releases\":[");
             for (var i = 0; i < releases.Length; i++)
             {
                 if (i > 0) sb.Append(',');
@@ -202,11 +206,10 @@ namespace MusicStrmExtract.Tests
                 => Task.FromResult<IReadOnlyList<ScoredRelease>>(
                     ReleaseJsonReader.ParseSearchReleases(Parse(SearchJson)));
 
-            public Task<IReadOnlyList<ReleaseSummary>> GetReleaseGroupReleasesAsync(
+            public Task<ParsedReleaseGroup> GetReleaseGroupAsync(
                 string rgMbid,
                 CancellationToken ct)
-                => Task.FromResult<IReadOnlyList<ReleaseSummary>>(
-                    ReleaseJsonReader.ParseReleaseGroup(Parse(RgJson)));
+                => Task.FromResult(ReleaseJsonReader.ParseReleaseGroup(Parse(RgJson)));
 
             public Task<ParsedRelease> GetReleaseAsync(string releaseMbid, CancellationToken ct)
             {

@@ -59,13 +59,13 @@ namespace MusicStrmExtract.Tests
                         "\"release-group\":{\"id\":\"rg-1\"}}]}")));
             }
 
-            public Task<IReadOnlyList<ReleaseSummary>> GetReleaseGroupReleasesAsync(
+            public Task<ParsedReleaseGroup> GetReleaseGroupAsync(
                 string rgMbid,
                 CancellationToken ct)
             {
                 _cts.Token.ThrowIfCancellationRequested();
-                return Task.FromResult<IReadOnlyList<ReleaseSummary>>(
-                    Array.Empty<ReleaseSummary>());
+                return Task.FromResult(ReleaseJsonReader.ParseReleaseGroup(
+                    Parse("{\"releases\":[]}")));
             }
 
             public Task<ParsedRelease> GetReleaseAsync(string releaseMbid, CancellationToken ct)

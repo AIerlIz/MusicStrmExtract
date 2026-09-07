@@ -80,6 +80,32 @@ namespace MusicStrmExtract.Tests
             Assert.Contains("/ws/2/release?query=", transport.LastUrl);
         }
 
+        [Fact]
+        public async Task GetReleaseGroupAsync_ParsesGroupConceptAndReleases()
+        {
+            var transport = new FakeTransport
+            {
+                Body = "{\"id\":\"rg-1\",\"title\":\"1989\",\"primary-type\":\"Album\"," +
+                       "\"artist-credit\":[{\"artist\":{\"id\":\"artist-1\",\"name\":\"Taylor Swift\"}}]," +
+                       "\"releases\":[{\"id\":\"release-1\",\"title\":\"1989\",\"status\":\"Official\"," +
+                       "\"country\":\"US\",\"barcode\":\"843930013500\",\"media\":[" +
+                       "{\"position\":1,\"format\":\"CD\",\"track-count\":13}]}]}"
+            };
+            var gate = new CountingGate();
+            using var api = new MusicBrainzApi("https://mb.example", transport, gate);
+
+            var group = await api.GetReleaseGroupAsync("rg-1", CancellationToken.None);
+
+            Assert.Equal("rg-1", group.Id);
+            Assert.Equal("1989", group.Title);
+            Assert.Equal("Album", group.PrimaryType);
+            Assert.Equal("Taylor Swift", group.ArtistCredits[0].Name);
+            var release = Assert.Single(group.Releases);
+            Assert.Equal("843930013500", release.Barcode);
+            Assert.Contains("/ws/2/release-group/rg-1?inc=releases+media+artist-credits", transport.LastUrl);
+            Assert.Equal(1, gate.AcquireCount);
+        }
+
         private sealed class FakeTransport : IHttpTransport
         {
             public int StatusCode { get; set; } = 200;
