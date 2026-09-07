@@ -16,7 +16,7 @@ namespace MusicStrmExtract.Ui
         private readonly Action<PluginConfiguration> _saveOptions;
         private readonly StaleMusicAlbumRepairService _repairService;
         private CancellationTokenSource? _repairCts;
-        private bool _repairRunning;
+        private int _repairRunning;
 
         public MusicStrmPageView(
             string pluginId,
@@ -69,7 +69,7 @@ namespace MusicStrmExtract.Ui
         {
             if (string.Equals(commandId, MusicStrmPageOptions.RepairCommand, StringComparison.Ordinal))
             {
-                if (_repairRunning)
+                if (Interlocked.CompareExchange(ref _repairRunning, 1, 0) != 0)
                 {
                     ContentData.ResultLabel.Text = "修复正在运行，请等待当前任务结束后再执行。";
                     RaiseInfoChanged();
@@ -78,7 +78,6 @@ namespace MusicStrmExtract.Ui
 
                 _repairCts?.Dispose();
                 _repairCts = new CancellationTokenSource();
-                _repairRunning = true;
                 ContentData.ResultLabel.Text = "修复已开始，正在读取媒体库...";
                 RunRepairInBackground(_repairCts.Token);
             }
@@ -146,7 +145,7 @@ namespace MusicStrmExtract.Ui
                     }
                     finally
                     {
-                        _repairRunning = false;
+                        Interlocked.Exchange(ref _repairRunning, 0);
                     }
                 },
                 CancellationToken.None);

@@ -20,10 +20,16 @@ namespace MusicStrmExtract.Ui
     /// </summary>
     internal sealed class StaleMusicAlbumRepairService
     {
+        private const string ScanRunningMessage =
+            "媒体库扫描正在运行，请等待扫描结束后再执行修复。";
+
         private readonly ILogger _logger;
-        private readonly ILibraryManager _libraryManager;
-        private readonly IProviderManager _providerManager;
-        private readonly IFileSystem _fileSystem;
+        private readonly Func<bool> _isScanRunning;
+        private readonly Func<IReadOnlyList<Audio>> _getAudios;
+        private readonly Func<IReadOnlyList<MusicAlbum>> _getMusicAlbums;
+        private readonly Action<MusicAlbum> _deleteAlbum;
+        private readonly Action<long, MetadataRefreshOptions> _queueRefresh;
+        private readonly IFileSystem? _fileSystem;
         private int _isRunning;
 
         public StaleMusicAlbumRepairService(
@@ -33,8 +39,40 @@ namespace MusicStrmExtract.Ui
             IFileSystem fileSystem)
         {
             _logger = logManager.GetLogger("MusicStrmExtract");
-            _libraryManager = libraryManager;
-            _providerManager = providerManager;
+            _isScanRunning = () => libraryManager.IsScanRunning;
+            _getAudios = () => libraryManager
+                .GetItemList(CreateItemQuery(nameof(Audio)))
+                .OfType<Audio>()
+                .ToList();
+            _getMusicAlbums = () => libraryManager
+                .GetItemList(CreateItemQuery(nameof(MusicAlbum)))
+                .OfType<MusicAlbum>()
+                .ToList();
+            _deleteAlbum = album => libraryManager.DeleteItem(album, new DeleteOptions
+            {
+                DeleteFileLocation = false,
+                DeleteFromExternalProvider = false
+            });
+            _queueRefresh = (id, options) =>
+                providerManager.QueueRefresh(id, options, RefreshPriority.High);
+            _fileSystem = fileSystem;
+        }
+
+        internal StaleMusicAlbumRepairService(
+            ILogger logger,
+            Func<bool> isScanRunning,
+            Func<IReadOnlyList<Audio>> getAudios,
+            Func<IReadOnlyList<MusicAlbum>> getMusicAlbums,
+            Action<MusicAlbum> deleteAlbum,
+            Action<long, MetadataRefreshOptions> queueRefresh,
+            IFileSystem? fileSystem = null)
+        {
+            _logger = logger;
+            _isScanRunning = isScanRunning;
+            _getAudios = getAudios;
+            _getMusicAlbums = getMusicAlbums;
+            _deleteAlbum = deleteAlbum;
+            _queueRefresh = queueRefresh;
             _fileSystem = fileSystem;
         }
 
@@ -58,19 +96,19 @@ namespace MusicStrmExtract.Ui
         private string RunCore(IProgress<string>? progress, CancellationToken ct)
         {
             progress?.Report("正在检查媒体库状态...");
-            if (_libraryManager.IsScanRunning)
+            if (_isScanRunning())
             {
-                return "媒体库扫描正在运行，请等待扫描结束后再执行修复。";
+                return ScanRunningMessage;
             }
 
-            var audios = GetAudios();
+            var audios = _getAudios();
             ct.ThrowIfCancellationRequested();
             var referencedAlbumIds = audios
                 .Where(a => a.AlbumId != 0)
                 .Select(a => a.AlbumId)
                 .ToHashSet();
 
-            var albums = GetMusicAlbums();
+            var albums = _getMusicAlbums();
             ct.ThrowIfCancellationRequested();
             var staleAlbums = albums
                 .Where(a => !HasMusicBrainzAlbum(a)
@@ -79,14 +117,27 @@ namespace MusicStrmExtract.Ui
                 .ToList();
 
             ct.ThrowIfCancellationRequested();
+            if (_isScanRunning())
+            {
+                _logger.Info(
+                    "[MusicStrmExtract] [Repair] 媒体库扫描已开始，中止删除：已删除 0 个陈旧 MusicAlbum");
+                return "媒体库扫描已开始，修复已中止（已删除 0 个陈旧 MusicAlbum）。";
+            }
+
             progress?.Report($"正在删除 {staleAlbums.Count} 个陈旧 MusicAlbum...");
+            var deleted = 0;
             foreach (var album in staleAlbums)
             {
-                _libraryManager.DeleteItem(album, new DeleteOptions
+                ct.ThrowIfCancellationRequested();
+                if (_isScanRunning())
                 {
-                    DeleteFileLocation = false,
-                    DeleteFromExternalProvider = false
-                });
+                    _logger.Info(
+                        $"[MusicStrmExtract] [Repair] 媒体库扫描已开始，中止删除：已删除 {deleted}/{staleAlbums.Count} 个陈旧 MusicAlbum");
+                    return $"媒体库扫描已开始，修复已中止（已删除 {deleted} 个陈旧 MusicAlbum）。";
+                }
+
+                _deleteAlbum(album);
+                deleted++;
             }
 
             var staleReferencedAlbumIds = albums
@@ -95,24 +146,34 @@ namespace MusicStrmExtract.Ui
                 .ToHashSet();
 
             ct.ThrowIfCancellationRequested();
+            if (_isScanRunning())
+            {
+                _logger.Info(
+                    $"[MusicStrmExtract] [Repair] 媒体库扫描已开始，跳过刷新：已删除 {deleted} 个陈旧 MusicAlbum");
+                return $"媒体库扫描已开始，修复已中止（已删除 {deleted} 个陈旧 MusicAlbum）。";
+            }
+
             var toRefresh = audios
                 .Where(a => a.Path?.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) == true
                     && HasMusicBrainzAlbum(a)
                     && (a.AlbumId == 0 || staleReferencedAlbumIds.Contains(a.AlbumId)))
                 .ToList();
 
-            progress?.Report($"正在排队刷新 {toRefresh.Count} 个 .strm...");
-            var refreshOptions = new MetadataRefreshOptions(_fileSystem)
+            if (toRefresh.Count > 0)
             {
-                MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
-                ImageRefreshMode = MetadataRefreshMode.FullRefresh,
-                ReplaceAllMetadata = false
-            };
+                progress?.Report($"正在排队刷新 {toRefresh.Count} 个 .strm...");
+                var refreshOptions = new MetadataRefreshOptions(_fileSystem)
+                {
+                    MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
+                    ImageRefreshMode = MetadataRefreshMode.FullRefresh,
+                    ReplaceAllMetadata = false
+                };
 
-            foreach (var audio in toRefresh)
-            {
-                _providerManager.QueueRefresh(audio.InternalId, refreshOptions, RefreshPriority.High);
-                ct.ThrowIfCancellationRequested();
+                foreach (var audio in toRefresh)
+                {
+                    _queueRefresh(audio.InternalId, refreshOptions);
+                    ct.ThrowIfCancellationRequested();
+                }
             }
 
             _logger.Info(
@@ -121,22 +182,13 @@ namespace MusicStrmExtract.Ui
             return $"已删除 {staleAlbums.Count} 个陈旧 MusicAlbum，已排队刷新 {toRefresh.Count} 个 .strm。";
         }
 
-        private List<MusicAlbum> GetMusicAlbums()
+        private static InternalItemsQuery CreateItemQuery(string itemType)
         {
-            return _libraryManager.GetItemList(new InternalItemsQuery
+            return new InternalItemsQuery
             {
                 Recursive = true,
-                IncludeItemTypes = new[] { nameof(MusicAlbum) }
-            }).OfType<MusicAlbum>().ToList();
-        }
-
-        private List<Audio> GetAudios()
-        {
-            return _libraryManager.GetItemList(new InternalItemsQuery
-            {
-                Recursive = true,
-                IncludeItemTypes = new[] { nameof(Audio) }
-            }).OfType<Audio>().ToList();
+                IncludeItemTypes = new[] { itemType }
+            };
         }
 
         private static bool HasMusicBrainzAlbum(BaseItem item)
