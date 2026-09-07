@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text.Json;
 using static MusicStrmExtract.Online.JsonUtil;
 
@@ -15,7 +16,7 @@ namespace MusicStrmExtract.Online
                 ParseReleaseMedias(releaseRoot));
         }
 
-        public static List<ReleaseMedia> ParseReleaseMedias(JsonElement releaseRoot)
+        public static IReadOnlyList<ReleaseMedia> ParseReleaseMedias(JsonElement releaseRoot)
         {
             var medias = new List<ReleaseMedia>();
             if (!releaseRoot.TryGetProperty("media", out var mediaArr) || mediaArr.ValueKind != JsonValueKind.Array)
@@ -25,59 +26,59 @@ namespace MusicStrmExtract.Online
 
             foreach (var m in mediaArr.EnumerateArray())
             {
-                var media = new ReleaseMedia { Position = GetInt(m, "position") };
-                if (m.TryGetProperty("tracks", out var tracks) && tracks.ValueKind == JsonValueKind.Array)
+                var tracks = new List<AlbumTrack>();
+                if (m.TryGetProperty("tracks", out var tracksJson) && tracksJson.ValueKind == JsonValueKind.Array)
                 {
-                    foreach (var t in tracks.EnumerateArray())
+                    foreach (var t in tracksJson.EnumerateArray())
                     {
-                        var track = new AlbumTrack();
                         var numberText = GetString(t, "number");
-                        track.Number = int.TryParse(numberText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n)
+                        var number = int.TryParse(numberText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n)
                             ? n
                             : GetInt(t, "position");
-                        track.Title = GetString(t, "title");
+                        if (number <= 0)
+                        {
+                            continue;
+                        }
+
+                        var title = GetString(t, "title");
+                        string? recordingMbid = null;
+                        var artists = new List<string>();
+                        string? artistMbid = null;
                         if (t.TryGetProperty("recording", out var rec))
                         {
-                            track.RecordingMbid = GetString(rec, "id");
-                            if (track.Title is null)
+                            recordingMbid = GetString(rec, "id");
+                            title ??= GetString(rec, "title");
+                            foreach (var credit in GetArtistCredits(rec, includeNameOnlyCredits: false))
                             {
-                                track.Title = GetString(rec, "title");
+                                if (!string.IsNullOrWhiteSpace(credit.Name))
+                                {
+                                    artists.Add(credit.Name!);
+                                }
+
+                                if (artistMbid is null && !string.IsNullOrWhiteSpace(credit.Id))
+                                {
+                                    artistMbid = credit.Id;
+                                }
                             }
-
-                            ApplyArtistCredit(track, rec);
                         }
 
-                        if (track.Number > 0)
-                        {
-                            media.Tracks.Add(track);
-                        }
+                        tracks.Add(new AlbumTrack(
+                            number,
+                            title,
+                            recordingMbid,
+                            artistMbid,
+                            artists.ToArray()));
                     }
                 }
 
-                media.Tracks.Sort((a, b) => a.Number.CompareTo(b.Number));
-                if (media.Tracks.Count > 0)
+                tracks.Sort((a, b) => a.Number.CompareTo(b.Number));
+                if (tracks.Count > 0)
                 {
-                    medias.Add(media);
+                    medias.Add(new ReleaseMedia(GetInt(m, "position"), tracks.ToArray()));
                 }
             }
 
             return medias;
-        }
-
-        private static void ApplyArtistCredit(AlbumTrack track, JsonElement recording)
-        {
-            foreach (var credit in GetArtistCredits(recording, includeNameOnlyCredits: false))
-            {
-                if (!string.IsNullOrWhiteSpace(credit.Name))
-                {
-                    track.Artists.Add(credit.Name!);
-                }
-
-                if (track.ArtistMbid is null && !string.IsNullOrWhiteSpace(credit.Id))
-                {
-                    track.ArtistMbid = credit.Id;
-                }
-            }
         }
     }
 }

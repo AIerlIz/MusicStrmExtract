@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 
 using MediaBrowser.Model.Dto;
@@ -14,6 +15,8 @@ namespace MusicStrmExtract.Ui
         private readonly Func<PluginConfiguration> _loadOptions;
         private readonly Action<PluginConfiguration> _saveOptions;
         private readonly StaleMusicAlbumRepairService _repairService;
+        private CancellationTokenSource? _repairCts;
+        private bool _repairRunning;
 
         public MusicStrmPageView(
             string pluginId,
@@ -66,14 +69,18 @@ namespace MusicStrmExtract.Ui
         {
             if (string.Equals(commandId, MusicStrmPageOptions.RepairCommand, StringComparison.Ordinal))
             {
-                try
+                if (_repairRunning)
                 {
-                    ContentData.ResultLabel.Text = _repairService.Run();
+                    ContentData.ResultLabel.Text = "修复正在运行，请等待当前任务结束后再执行。";
+                    RaiseInfoChanged();
+                    return Task.FromResult((IPluginUIView)this);
                 }
-                catch (Exception ex)
-                {
-                    ContentData.ResultLabel.Text = "修复失败: " + ex.Message;
-                }
+
+                _repairCts?.Dispose();
+                _repairCts = new CancellationTokenSource();
+                _repairRunning = true;
+                ContentData.ResultLabel.Text = "修复已开始，正在读取媒体库...";
+                RunRepairInBackground(_repairCts.Token);
             }
 
             RaiseInfoChanged();
@@ -91,6 +98,9 @@ namespace MusicStrmExtract.Ui
 
         public Task Cancel()
         {
+            _repairCts?.Cancel();
+            _repairCts?.Dispose();
+            _repairCts = null;
             return Task.CompletedTask;
         }
 
@@ -101,6 +111,51 @@ namespace MusicStrmExtract.Ui
         private void RaiseInfoChanged()
         {
             UIViewInfoChanged?.Invoke(this, new GenericEventArgs<IPluginUIView>(this));
+        }
+
+        private void RunRepairInBackground(CancellationToken ct)
+        {
+            _ = Task.Run(
+                () =>
+                {
+                    try
+                    {
+                        var progress = new Progress<string>(message =>
+                        {
+                            if (!ct.IsCancellationRequested)
+                            {
+                                SetResultLabel(message);
+                            }
+                        });
+
+                        var result = _repairService.Run(progress, ct);
+                        if (!ct.IsCancellationRequested)
+                        {
+                            SetResultLabel(result);
+                        }
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                    }
+                    catch (Exception ex)
+                    {
+                        if (!ct.IsCancellationRequested)
+                        {
+                            SetResultLabel("修复失败: " + ex.Message);
+                        }
+                    }
+                    finally
+                    {
+                        _repairRunning = false;
+                    }
+                },
+                CancellationToken.None);
+        }
+
+        private void SetResultLabel(string message)
+        {
+            ContentData.ResultLabel.Text = message;
+            RaiseInfoChanged();
         }
     }
 }

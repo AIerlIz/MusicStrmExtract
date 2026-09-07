@@ -54,7 +54,7 @@ namespace MusicStrmExtract.Online
             IReadOnlyList<LocalDisc> localDiscs,
             CancellationToken ct)
         {
-            var result = new AlbumSearchResult();
+            var result = AlbumSearchResult.Empty;
             var clean = CleanAlbumName(albumFolderName);
             if (string.IsNullOrWhiteSpace(clean)
                 || localDiscs is null
@@ -252,34 +252,26 @@ namespace MusicStrmExtract.Online
                 SetFallback(state, parsed.Release, parsed.Medias);
             }
 
-            return state.FirstFallback ?? new AlbumSearchResult();
+            return state.FirstFallback ?? AlbumSearchResult.Empty;
         }
 
         private static AlbumSearchResult BuildAlbumResult(
             ReleaseSummary release,
             IReadOnlyList<ReleaseMedia> medias)
         {
-            var result = new AlbumSearchResult
-            {
-                Found = true,
-                Title = release.Title,
-                Year = JsonUtil.ParseYear(release.Date),
-                ReleaseMbid = release.Id,
-                ArtistName = release.ArtistCredits
+            return new AlbumSearchResult(
+                true,
+                release.Title,
+                JsonUtil.ParseYear(release.Date),
+                release.Id,
+                release.ReleaseGroupMbid,
+                release.ArtistCredits
                     .Select(c => c.Name)
                     .FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)),
-                AlbumArtistMbid = release.ArtistCredits
+                release.ArtistCredits
                     .Select(c => c.Id)
                     .FirstOrDefault(id => !string.IsNullOrWhiteSpace(id)),
-                ReleaseGroupMbid = release.ReleaseGroupMbid
-            };
-
-            foreach (var media in medias)
-            {
-                result.Medias.Add(media);
-            }
-
-            return result;
+                medias.ToArray());
         }
 
         private static void SetFallback(
