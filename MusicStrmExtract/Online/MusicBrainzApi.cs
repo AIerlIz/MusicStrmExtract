@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -12,21 +11,22 @@ namespace MusicStrmExtract.Online
     public sealed class MusicBrainzApi : IMusicBrainzApi
     {
         private const string DefaultBaseUrl = "https://musicbrainz.org";
-        private const int MinimumRequestIntervalMs = 1100;
 
-        private static readonly SemaphoreSlim Gate = new SemaphoreSlim(1, 1);
-        private static DateTime _lastRequestUtc = DateTime.MinValue;
-
-        private readonly HttpClient _http;
         private readonly string _baseUrl;
+        private readonly IHttpTransport _transport;
+        private readonly IRequestGate _gate;
         private readonly ConcurrentDictionary<string, string> _responseCache = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
 
         public MusicBrainzApi(string? baseUrl = null, int timeoutSeconds = 25)
+            : this(baseUrl, CreateDefaultTransport(timeoutSeconds), StaticMusicBrainzRateGate.Instance)
+        {
+        }
+
+        internal MusicBrainzApi(string? baseUrl, IHttpTransport transport, IRequestGate gate)
         {
             _baseUrl = (baseUrl ?? DefaultBaseUrl).TrimEnd('/');
-            _http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
-            _http.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
-            _http.DefaultRequestHeaders.UserAgent.ParseAdd(PluginConstants.UserAgent);
+            _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+            _gate = gate ?? throw new ArgumentNullException(nameof(gate));
         }
 
         public async Task<ParsedRelease> GetReleaseAsync(string releaseMbid, CancellationToken ct)
@@ -48,6 +48,7 @@ namespace MusicStrmExtract.Online
             {
                 sb.Append(" AND artist:\"").Append(artist.Trim().Replace("\"", string.Empty)).Append('"');
             }
+
             var query = Uri.EscapeDataString(sb.ToString());
             var url = $"{_baseUrl}/ws/2/release?query={query}&fmt=json&limit={limit}";
             return ReleaseJsonReader.ParseSearchReleases(
@@ -73,45 +74,44 @@ namespace MusicStrmExtract.Online
                 return cachedDoc.RootElement.Clone();
             }
 
-            // 锁要覆盖整个请求而不是只覆盖排队:否则两个请求虽然间隔 1.1 秒启动,
+            // 门在"间隔等待 + 完整 HTTP 请求"期间保持占用:否则两个请求虽然间隔 1.1 秒启动,
             // 前一个仍可能未结束就并发打向 MusicBrainz,触发 503/429。
-            await Gate.WaitAsync(ct).ConfigureAwait(false);
-            try
+            using var _ = await _gate.AcquireAsync(ct).ConfigureAwait(false);
+            var response = await _transport.GetAsync(url, ct).ConfigureAwait(false);
+            if (response.StatusCode < 200 || response.StatusCode >= 300)
             {
-                var interval = TimeSpan.FromMilliseconds(MinimumRequestIntervalMs);
-                var elapsed = DateTime.UtcNow - _lastRequestUtc;
-                if (elapsed < interval)
-                {
-                    await Task.Delay(interval - elapsed, ct).ConfigureAwait(false);
-                }
-
-                _lastRequestUtc = DateTime.UtcNow;
-                using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-                var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                if (!response.IsSuccessStatusCode)
-                {
-                    throw new HttpRequestException(
-                        $"MusicBrainz HTTP {(int)response.StatusCode}: {Truncate(body, 200)}",
-                        null,
-                        response.StatusCode);
-                }
-
-                using var doc = JsonDocument.Parse(body);
-                _responseCache.TryAdd(url, body);
-                return doc.RootElement.Clone();
+                throw new HttpRequestException(
+                    $"MusicBrainz HTTP {response.StatusCode}: {Truncate(response.Body, 200)}",
+                    null,
+                    (System.Net.HttpStatusCode)response.StatusCode);
             }
-            finally
-            {
-                Gate.Release();
-            }
+
+            using var doc = JsonDocument.Parse(response.Body);
+            _responseCache.TryAdd(url, response.Body);
+            return doc.RootElement.Clone();
+        }
+
+        private static IHttpTransport CreateDefaultTransport(int timeoutSeconds)
+        {
+            var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
+            http.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+            http.DefaultRequestHeaders.UserAgent.ParseAdd(PluginConstants.UserAgent);
+            return new HttpClientTransport(http);
         }
 
         private static string Truncate(string value, int max)
         {
-            if (string.IsNullOrEmpty(value) || value.Length <= max) return value ?? string.Empty;
+            if (string.IsNullOrEmpty(value) || value.Length <= max)
+            {
+                return value ?? string.Empty;
+            }
+
             return value.Substring(0, max) + "...";
         }
 
-        public void Dispose() { _http.Dispose(); }
+        public void Dispose()
+        {
+            _transport.Dispose();
+        }
     }
 }

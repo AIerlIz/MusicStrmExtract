@@ -46,9 +46,9 @@
 - 修改这些排序、提前返回或断点逻辑时，同步维护 `AlbumSearchSelectionTests` 和 `ReleaseGroupScorerTests`。
 
 ### MusicBrainz 限流
-- `MusicBrainzApi` 的静态信号量覆盖“间隔等待 + 完整 HTTP 请求”，避免上一请求未结束时并发打向 MusicBrainz。
-- 请求间隔常量为 `MinimumRequestIntervalMs`（1100ms）；不要改回“只锁等待间隔、释放后再发请求”的实现。
-- 涉及新增 MusicBrainz 请求入口时统一走 `GetJsonRootAsync`，不要绕过缓存与限流直接发 `HttpClient`。
+- `MusicBrainzApi` 通过共享的 `StaticMusicBrainzRateGate`（内部为 `RequestRateLimiter`）覆盖“间隔等待 + 完整 HTTP 请求”，避免上一请求未结束时并发打向 MusicBrainz。
+- 请求间隔常量 `MinimumRequestIntervalMs`（1100ms）位于 `StaticMusicBrainzRateGate`；不要改回“只锁等待间隔、释放后再发请求”的实现，也不要改成实例级限流。
+- 涉及新增 MusicBrainz 请求入口时统一走 `GetJsonRootAsync`，不要绕过缓存与限流直接发 `HttpClient`；测试中注入 `IHttpTransport` / `IRequestGate`。
 
 ### 发版与验证
 - 项目版本号需要手动同步：发新 tag 前更新 `MusicStrmExtract.csproj` 的 `Version`、`AssemblyVersion`、`FileVersion`。当前已同步为 `1.7.0.0`。
