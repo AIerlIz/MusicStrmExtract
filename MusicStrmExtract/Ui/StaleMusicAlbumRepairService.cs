@@ -19,8 +19,6 @@ namespace MusicStrmExtract.Ui
     /// </summary>
     internal sealed class StaleMusicAlbumRepairService
     {
-        private const string MusicBrainzAlbumId = "MusicBrainzAlbum";
-
         private readonly ILogger _logger;
         private readonly ILibraryManager _libraryManager;
         private readonly IProviderManager _providerManager;
@@ -116,7 +114,7 @@ namespace MusicStrmExtract.Ui
         private static bool HasMusicBrainzAlbum(BaseItem item)
         {
             return item.ProviderIds != null
-                && item.ProviderIds.TryGetValue(MusicBrainzAlbumId, out var id)
+                && item.ProviderIds.TryGetValue(PluginConstants.MusicBrainzAlbum, out var id)
                 && !string.IsNullOrWhiteSpace(id);
         }
     }

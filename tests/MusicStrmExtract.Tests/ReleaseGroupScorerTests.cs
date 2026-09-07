@@ -1,5 +1,6 @@
+using System;
+using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 
 using MusicStrmExtract.Online;
 
@@ -9,34 +10,33 @@ namespace MusicStrmExtract.Tests
 {
     public class ReleaseGroupScorerTests
     {
-        /// <summary>构造一个含有多个版本的 release-group JSON 数组(字段与 MB release-group?inc=releases+media 一致)。</summary>
-        private static JsonElement BuildRgJson(params (string Id, string Status, string? Barcode, string? Country,
+        /// <summary>构造一个含有多个版本的 release-group 候选列表。</summary>
+        private static IReadOnlyList<ReleaseSummary> BuildRgJson(params (string Id, string Status, string? Barcode, string? Country,
             string? Date, bool HasCDDisc, string? Disambiguation)[] releases)
         {
-            var sb = new System.Text.StringBuilder("[");
-            for (var i = 0; i < releases.Length; i++)
+            var result = new List<ReleaseSummary>();
+            foreach (var release in releases)
             {
-                if (i > 0) sb.Append(',');
-                var (id, status, barcode, country, date, hasCDDisc, disambig) = releases[i];
-                sb.Append('{');
-                sb.Append($"\"id\":\"{id}\"");
-                sb.Append($",\"status\":\"{status}\"");
-                if (!string.IsNullOrEmpty(barcode)) sb.Append($",\"barcode\":\"{barcode}\"");
-                else sb.Append(",\"barcode\":null");
-                if (!string.IsNullOrEmpty(country)) sb.Append($",\"country\":\"{country}\"");
-                else sb.Append(",\"country\":null");
-                if (!string.IsNullOrEmpty(date)) sb.Append($",\"date\":\"{date}\"");
-                else sb.Append(",\"date\":null");
-                if (!string.IsNullOrEmpty(disambig)) sb.Append($",\"disambiguation\":\"{disambig}\"");
-                else sb.Append(",\"disambiguation\":null");
-                // media(MB 字段名,非 medium-list);给 CD 版带 track-count 供布局匹配
-                sb.Append(",\"media\":[");
-                if (hasCDDisc) sb.Append("{\"format\":\"CD\",\"track-count\":13}");
-                sb.Append(']');
-                sb.Append('}');
+                var (id, status, barcode, country, date, hasCDDisc, disambig) = release;
+                var media = hasCDDisc
+                    ? (IReadOnlyList<ReleaseMediaInfo>)new[] { new ReleaseMediaInfo(1, "CD", 13) }
+                    : Array.Empty<ReleaseMediaInfo>();
+                result.Add(new ReleaseSummary(
+                    id,
+                    null,
+                    date,
+                    status,
+                    country,
+                    barcode,
+                    null,
+                    disambig,
+                    null,
+                    null,
+                    Array.Empty<ArtistCredit>(),
+                    media));
             }
-            sb.Append(']');
-            return System.Text.Json.JsonDocument.Parse(sb.ToString()).RootElement;
+
+            return result;
         }
 
         [Fact]
@@ -49,7 +49,7 @@ namespace MusicStrmExtract.Tests
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg);
             Assert.Equal(3, scored.Count);
-            Assert.Equal("a", scored[0].Item.GetProperty("id").GetString());
+            Assert.Equal("a", scored[0].Release.Id);
             Assert.True(scored[0].Score > scored[1].Score);
             Assert.True(scored[0].Score > scored[2].Score);
         }
@@ -62,8 +62,8 @@ namespace MusicStrmExtract.Tests
                 ("off",  "Official", null, "US", "2014-10-27", false, null)
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg);
-            Assert.Equal("off", scored[0].Item.GetProperty("id").GetString());
-            Assert.Equal("boot", scored[1].Item.GetProperty("id").GetString());
+            Assert.Equal("off", scored[0].Release.Id);
+            Assert.Equal("boot", scored[1].Release.Id);
         }
 
         [Fact]
@@ -91,7 +91,7 @@ namespace MusicStrmExtract.Tests
                 ("official", "Official", "123", "US", "2014-01-01", true, null)
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg);
-            Assert.Equal("official", scored[0].Item.GetProperty("id").GetString());
+            Assert.Equal("official", scored[0].Release.Id);
             Assert.True(scored[0].Score > scored[1].Score);
         }
 
@@ -103,7 +103,7 @@ namespace MusicStrmExtract.Tests
                 ("b", "Official", "123", "US", "2014", false, null)
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg);
-            Assert.Equal("a", scored[0].Item.GetProperty("id").GetString());
+            Assert.Equal("a", scored[0].Release.Id);
             Assert.True(scored[0].Score > scored[1].Score);
         }
 
@@ -116,7 +116,7 @@ namespace MusicStrmExtract.Tests
                 ("nod", "Official", "123", "US", "2014-10-27", false, null)
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg);
-            Assert.Equal("cd", scored[0].Item.GetProperty("id").GetString());
+            Assert.Equal("cd", scored[0].Release.Id);
             Assert.True(scored[0].Score > scored[1].Score);
         }
 
@@ -129,7 +129,7 @@ namespace MusicStrmExtract.Tests
                 ("disc",  "Official", "123", "US", "2014-10-27", true, "MOINS CHER")
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg);
-            Assert.Equal("plain", scored[0].Item.GetProperty("id").GetString());
+            Assert.Equal("plain", scored[0].Release.Id);
             Assert.True(scored[0].Score > scored[1].Score);
         }
 
@@ -146,7 +146,7 @@ namespace MusicStrmExtract.Tests
             var scoredNoYear = ReleaseGroupScorer.ScoreAll(rg);
             // 有 localYear=2004 → 2004 版排第一
             var scored = ReleaseGroupScorer.ScoreAll(rg, localYear: 2004);
-            Assert.Equal("tw2004", scored[0].Item.GetProperty("id").GetString());
+            Assert.Equal("tw2004", scored[0].Release.Id);
         }
 
         [Fact]
@@ -158,7 +158,7 @@ namespace MusicStrmExtract.Tests
                 ("early", "Official", "ABC", "US", "2004-08-03", true, null)
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg, localYear: 2005);
-            Assert.Equal("early", scored[0].Item.GetProperty("id").GetString());
+            Assert.Equal("early", scored[0].Release.Id);
         }
 
         [Fact]
@@ -170,7 +170,7 @@ namespace MusicStrmExtract.Tests
                 ("b", "Bootleg",  "123", "US", "2014-10-27", false, null)
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg, localYear: null);
-            Assert.Equal("a", scored[0].Item.GetProperty("id").GetString());
+            Assert.Equal("a", scored[0].Release.Id);
         }
 
         [Fact]
@@ -185,7 +185,7 @@ namespace MusicStrmExtract.Tests
             );
             var local = new LocalDisc();
             local.TrackNumbers.AddRange(Enumerable.Range(1, 13));
-            Assert.Equal("US", ReleaseGroupScorer.InferPreferredCountry(rg.EnumerateArray(), new[] { local }));
+            Assert.Equal("US", ReleaseGroupScorer.InferPreferredCountry(rg, new[] { local }));
         }
 
         [Fact]
@@ -201,7 +201,7 @@ namespace MusicStrmExtract.Tests
             );
             var local = new LocalDisc();
             local.TrackNumbers.AddRange(Enumerable.Range(1, 13));
-            Assert.Equal("US", ReleaseGroupScorer.InferPreferredCountry(rg.EnumerateArray(), new[] { local }));
+            Assert.Equal("US", ReleaseGroupScorer.InferPreferredCountry(rg, new[] { local }));
         }
 
         [Fact]
@@ -214,7 +214,7 @@ namespace MusicStrmExtract.Tests
                 ("cl", "Official", "602547071668", "CL", "2014-10-27", true, null)
             );
             var withUs = ReleaseGroupScorer.ScoreAll(rg, preferredCountry: "US");
-            Assert.Equal("us", withUs[0].Item.GetProperty("id").GetString());
+            Assert.Equal("us", withUs[0].Release.Id);
             Assert.True(withUs[0].Score > withUs[1].Score);
         }
 
@@ -228,7 +228,7 @@ namespace MusicStrmExtract.Tests
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg, preferredCountry: "US");
 
-            Assert.Equal("official", scored[0].Item.GetProperty("id").GetString());
+            Assert.Equal("official", scored[0].Release.Id);
             Assert.True(scored[0].Score > scored[1].Score);
         }
 
@@ -241,7 +241,7 @@ namespace MusicStrmExtract.Tests
             );
             var local = new LocalDisc();
             local.TrackNumbers.AddRange(Enumerable.Range(1, 13));
-            Assert.Null(ReleaseGroupScorer.InferPreferredCountry(rg.EnumerateArray(), new[] { local }));
+            Assert.Null(ReleaseGroupScorer.InferPreferredCountry(rg, new[] { local }));
         }
     }
 }

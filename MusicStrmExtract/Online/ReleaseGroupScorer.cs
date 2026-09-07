@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
-using System.Text.RegularExpressions;
 using static MusicStrmExtract.Online.JsonUtil;
 
 namespace MusicStrmExtract.Online
@@ -12,9 +10,6 @@ namespace MusicStrmExtract.Online
     /// </summary>
     public static class ReleaseGroupScorer
     {
-        private const int OfficialStatusWeight = 40;
-        private const int PseudoReleaseWeight = -10;
-        private const int BootlegOrWithdrawnWeight = -40;
         private const int BarcodePresentWeight = 30;
         private const int BarcodeFrequencyPerOccurrence = 5;
         private const int BarcodeFrequencyMax = 50;
@@ -25,32 +20,28 @@ namespace MusicStrmExtract.Online
         private const int PreferredCountryWeight = 500;
 
         /// <summary>
-        /// 对同 RG 下所有 release 评分并排序，返回 (release JSON, score) 列表。
+        /// 对同 RG 下所有 release 评分并排序。
         /// 主排序：总分降序；次级：本地年份与 release date 年份就近（差值绝对值小者优先）。
         /// </summary>
-        /// <param name="allReleases">release-group 响应中的 releases JSON 数组。</param>
+        /// <param name="releases">同 release-group 的全部候选。</param>
         /// <param name="localYear">本地目录名解析出的年份（如 "七里香 (2004)" → 2004）；null 表示无年份，跳过就近排序。</param>
         /// <param name="preferredCountry">自动推断出的偏好国家（ISO 3166-1 alpha-2）；
         /// 只在最高基础分档内参与决胜，null 表示不启用国家加权。</param>
-        public static List<(JsonElement Item, int Score)> ScoreAll(JsonElement allReleases, int? localYear = null, string? preferredCountry = null)
+        public static List<RankedRelease> ScoreAll(
+            IReadOnlyList<ReleaseSummary> releases,
+            int? localYear = null,
+            string? preferredCountry = null)
         {
-            var result = new List<(JsonElement Item, int Score)>();
-            var barcodeCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var r in allReleases.EnumerateArray())
+            var result = new List<RankedRelease>();
+            if (releases is null || releases.Count == 0)
             {
-                var bc = GetString(r, "barcode");
-                if (!string.IsNullOrWhiteSpace(bc))
-                {
-                    if (!barcodeCounts.TryGetValue(bc, out var c)) barcodeCounts[bc] = 0;
-                    barcodeCounts[bc] = c + 1;
-                }
+                return result;
             }
 
-            foreach (var r in allReleases.EnumerateArray())
+            var barcodeCounts = CountBarcodes(releases);
+            foreach (var release in releases)
             {
-                var score = ScoreRelease(r, barcodeCounts);
-                result.Add((r, score));
+                result.Add(new RankedRelease(release, ScoreRelease(release, barcodeCounts)));
             }
 
             // 偏好国家只在最高基础分档内生效:低于最高档的 Bootleg/Pseudo-Release
@@ -65,10 +56,9 @@ namespace MusicStrmExtract.Online
                         continue;
                     }
 
-                    var country = GetString(result[i].Item, "country");
-                    if (string.Equals(country, preferredCountry, StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(result[i].Release.Country, preferredCountry, StringComparison.OrdinalIgnoreCase))
                     {
-                        result[i] = (result[i].Item, result[i].Score + PreferredCountryWeight);
+                        result[i] = result[i] with { Score = result[i].Score + PreferredCountryWeight };
                     }
                 }
             }
@@ -78,21 +68,30 @@ namespace MusicStrmExtract.Online
                 result.Sort((a, b) =>
                 {
                     var cmp = b.Score.CompareTo(a.Score);
-                    if (cmp != 0) return cmp;
-                    var ya = GetYear(a.Item);
-                    var yb = GetYear(b.Item);
+                    if (cmp != 0)
+                    {
+                        return cmp;
+                    }
+
+                    var ya = GetYear(a.Release);
+                    var yb = GetYear(b.Release);
                     if (ya.HasValue && yb.HasValue)
                     {
                         var da = Math.Abs(ya.Value - localYear.Value);
                         var db = Math.Abs(yb.Value - localYear.Value);
                         cmp = da.CompareTo(db);
-                        if (cmp != 0) return cmp;
+                        if (cmp != 0)
+                        {
+                            return cmp;
+                        }
+
                         // 年份差值相同，日期更早者优先（首发原版胜出）
                         return string.Compare(
-                            GetString(a.Item, "date") ?? "9999",
-                            GetString(b.Item, "date") ?? "9999",
+                            a.Release.Date ?? "9999",
+                            b.Release.Date ?? "9999",
                             StringComparison.Ordinal);
                     }
+
                     // 有年份的排在无年份前面
                     return ya.HasValue ? -1 : yb.HasValue ? 1 : 0;
                 });
@@ -110,34 +109,21 @@ namespace MusicStrmExtract.Online
         /// 取出现次数最多的国家(mode);次数打平时,取"该国基础分最高"的国家;再打平按国名稳定。
         /// 没有任何可匹配候选时返回 null(不启用加权,保持原行为)。
         /// </summary>
-        public static string? InferPreferredCountry(IEnumerable<JsonElement> releases, IReadOnlyList<LocalDisc> localDiscs)
+        public static string? InferPreferredCountry(
+            IReadOnlyList<ReleaseSummary> releases,
+            IReadOnlyList<LocalDisc> localDiscs)
         {
-            if (releases is null || localDiscs is null || localDiscs.Count == 0)
+            if (releases is null || releases.Count == 0 || localDiscs is null || localDiscs.Count == 0)
             {
                 return null;
             }
 
-            var list = releases.Where(r => r.ValueKind == JsonValueKind.Object).ToList();
-            if (list.Count == 0)
-            {
-                return null;
-            }
-
-            var barcodeCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            foreach (var r in list)
-            {
-                var bc = GetString(r, "barcode");
-                if (!string.IsNullOrWhiteSpace(bc))
-                {
-                    if (!barcodeCounts.TryGetValue(bc, out var c)) barcodeCounts[bc] = 0;
-                    barcodeCounts[bc] = c + 1;
-                }
-            }
+            var barcodeCounts = CountBarcodes(releases);
 
             // 只统计"官方实体版"且碟布局与本地一致的候选,避免被 Withdrawn/数字版带偏
-            var compatible = list
-                .Where(r => string.Equals(GetString(r, "status"), "Official", StringComparison.OrdinalIgnoreCase)
-                            && !string.IsNullOrWhiteSpace(GetString(r, "barcode"))
+            var compatible = releases
+                .Where(r => ReleaseStatusPolicy.IsOfficial(r.Status)
+                            && !string.IsNullOrWhiteSpace(r.Barcode)
                             && LayoutMatchesLocal(r, localDiscs))
                 .ToList();
             if (compatible.Count == 0)
@@ -146,7 +132,7 @@ namespace MusicStrmExtract.Online
             }
 
             return compatible
-                .GroupBy(r => GetString(r, "country") ?? string.Empty)
+                .GroupBy(r => r.Country ?? string.Empty)
                 .Where(g => !string.IsNullOrWhiteSpace(g.Key))
                 .Select(g => new
                 {
@@ -161,27 +147,66 @@ namespace MusicStrmExtract.Online
                 .FirstOrDefault();
         }
 
-        /// <summary>release 的 media 布局是否与本地碟组完全一致(逐碟 track-count 相等)。</summary>
-        private static bool LayoutMatchesLocal(JsonElement release, IReadOnlyList<LocalDisc> localDiscs)
+        /// <summary>
+        /// 两个 release 是否在 ScoreAll 的排序键下真正并列(同分 + 同年份就近 + 同日期);
+        /// 无本地年份时 ScoreAll 只按分排序,同分即同级、可交给 CAA 决胜。
+        /// </summary>
+        internal static bool AreInSameRankingTier(
+            ReleaseSummary first,
+            ReleaseSummary second,
+            int firstScore,
+            int secondScore,
+            int? localYear)
         {
-            if (!release.TryGetProperty("media", out var mediaArr) || mediaArr.ValueKind != JsonValueKind.Array)
+            if (firstScore != secondScore)
             {
                 return false;
             }
 
-            var medias = mediaArr.EnumerateArray().ToList();
-            if (medias.Count != localDiscs.Count)
+            if (localYear is null)
+            {
+                return true;
+            }
+
+            var firstYear = GetYear(first);
+            var secondYear = GetYear(second);
+            if (!firstYear.HasValue && !secondYear.HasValue)
+            {
+                // 双方都缺年份时 ScoreAll 的排序键仍并列,应继续用 CAA 决胜。
+                return true;
+            }
+
+            if (!firstYear.HasValue || !secondYear.HasValue)
+            {
+                return false; // 仅一方缺年份:ScoreAll 会把"有年份"排前,缺失项不视为并列
+            }
+
+            if (Math.Abs(firstYear.Value - localYear.Value) != Math.Abs(secondYear.Value - localYear.Value))
+            {
+                return false;
+            }
+
+            return string.Equals(
+                first.Date ?? "9999",
+                second.Date ?? "9999",
+                StringComparison.Ordinal);
+        }
+
+        /// <summary>release 的 media 布局是否与本地碟组完全一致(逐碟 track-count 相等)。</summary>
+        private static bool LayoutMatchesLocal(ReleaseSummary release, IReadOnlyList<LocalDisc> localDiscs)
+        {
+            if (release.Media.Count != localDiscs.Count)
             {
                 return false;
             }
 
             // 按 media.position 与本地碟(DiscNumber/轨数)排序后逐碟比对
-            var sortedMedia = medias.OrderBy(m => GetInt(m, "position")).ToList();
+            var sortedMedia = release.Media.OrderBy(m => m.Position).ToList();
             var sortedLocal = localDiscs.OrderBy(d => d.DiscNumber ?? int.MaxValue).ToList();
             for (var i = 0; i < sortedLocal.Count; i++)
             {
-                var tc = GetInt(sortedMedia[i], "track-count");
-                if (tc <= 0 || tc != sortedLocal[i].TrackNumbers.Count)
+                var trackCount = sortedMedia[i].TrackCount;
+                if (trackCount <= 0 || trackCount != sortedLocal[i].TrackNumbers.Count)
                 {
                     return false;
                 }
@@ -190,56 +215,53 @@ namespace MusicStrmExtract.Online
             return true;
         }
 
-        private static int ScoreRelease(JsonElement release, Dictionary<string, int> barcodeCounts)
+        private static Dictionary<string, int> CountBarcodes(IEnumerable<ReleaseSummary> releases)
         {
-            int score = 0;
-
-            // Status: Official +40, Pseudo-Release -10, Bootleg/Withdrawn -40
-            var status = GetString(release, "status");
-            switch (status)
+            var barcodeCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var release in releases)
             {
-                case "Official": score += OfficialStatusWeight; break;
-                case "Pseudo-Release": score += PseudoReleaseWeight; break;
-                case "Bootleg":
-                case "Withdrawn":
-                    score += BootlegOrWithdrawnWeight; break;
+                if (string.IsNullOrWhiteSpace(release.Barcode))
+                {
+                    continue;
+                }
+
+                barcodeCounts.TryGetValue(release.Barcode, out var count);
+                barcodeCounts[release.Barcode] = count + 1;
             }
 
-            // Barcode 存在 +30
-            var barcode = GetString(release, "barcode");
-            if (!string.IsNullOrWhiteSpace(barcode))
+            return barcodeCounts;
+        }
+
+        private static int ScoreRelease(ReleaseSummary release, Dictionary<string, int> barcodeCounts)
+        {
+            int score = 0;
+            score += ReleaseStatusPolicy.ScoreWeight(release.Status);
+
+            if (!string.IsNullOrWhiteSpace(release.Barcode))
             {
                 score += BarcodePresentWeight;
-                // 频次加分 +5/次，上限 +50
-                if (barcodeCounts.TryGetValue(barcode, out var count))
+                if (barcodeCounts.TryGetValue(release.Barcode, out var count))
                 {
                     score += Math.Min(count * BarcodeFrequencyPerOccurrence, BarcodeFrequencyMax);
                 }
             }
 
-            // 完整日期 YYYY-MM-DD +10
-            var date = GetString(release, "date");
-            if (!string.IsNullOrWhiteSpace(date) && IsCompleteDate(date))
+            if (!string.IsNullOrWhiteSpace(release.Date) && IsCompleteDate(release.Date))
             {
                 score += CompleteDateWeight;
             }
 
-            // Format = CD +8（MB release-group 响应中字段名为 media，非 medium-list）
             if (IsCdFormat(release))
             {
                 score += CdFormatWeight;
             }
 
-            // Packaging = Jewel Case +5
-            var packaging = GetString(release, "packaging");
-            if (string.Equals(packaging, "Jewel Case", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(release.Packaging, "Jewel Case", StringComparison.OrdinalIgnoreCase))
             {
                 score += JewelCaseWeight;
             }
 
-            // Disambiguation 为空 +5
-            var disambig = GetString(release, "disambiguation");
-            if (string.IsNullOrWhiteSpace(disambig))
+            if (string.IsNullOrWhiteSpace(release.Disambiguation))
             {
                 score += DisambiguationEmptyWeight;
             }
@@ -247,31 +269,15 @@ namespace MusicStrmExtract.Online
             return score;
         }
 
-        private static bool IsCdFormat(JsonElement release)
+        private static bool IsCdFormat(ReleaseSummary release)
         {
-            if (!release.TryGetProperty("media", out var ml) || ml.ValueKind != JsonValueKind.Array) return false;
-            foreach (var m in ml.EnumerateArray())
-            {
-                var fmt = GetString(m, "format");
-                if (string.Equals(fmt, "CD", StringComparison.OrdinalIgnoreCase)) return true;
-            }
-            return false;
+            return release.Media.Any(m =>
+                string.Equals(m.Format, "CD", StringComparison.OrdinalIgnoreCase));
         }
 
-        private static bool IsCompleteDate(string date)
+        private static int? GetYear(ReleaseSummary release)
         {
-            if (date.Length != 10) return false;
-            var m = Regex.Match(date, @"^\d{4}-\d{2}-\d{2}$");
-            return m.Success;
+            return ParseLeadingYear(release.Date);
         }
-
-        private static int? GetYear(JsonElement release)
-        {
-            var date = GetString(release, "date");
-            if (string.IsNullOrWhiteSpace(date)) return null;
-            var m = Regex.Match(date, @"^\d{4}");
-            return m.Success ? int.Parse(m.Value, System.Globalization.CultureInfo.InvariantCulture) : null;
-        }
-
     }
 }

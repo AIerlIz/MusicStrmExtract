@@ -138,18 +138,6 @@ namespace MusicStrmExtract.Tests
             Assert.Equal("other-rg2", result.ReleaseMbid);
         }
 
-        [Theory]
-        [InlineData("Official", 0)]
-        [InlineData("Promotional", 1)]
-        [InlineData("Unknown", 1)]
-        [InlineData("Bootleg", 2)]
-        [InlineData("Withdrawn", 2)]
-        [InlineData("Pseudo-Release", 3)]
-        public void StatusRank_GroupsWithdrawnWithBootleg(string status, int expected)
-        {
-            Assert.Equal(expected, AlbumSearch.StatusRank(status));
-        }
-
         private static async Task<AlbumSearchResult> RunAsync(FakeMusicBrainzApi api, FakeCoverArtClient cover)
         {
             var local = new LocalDisc();
@@ -206,16 +194,25 @@ namespace MusicStrmExtract.Tests
 
             public int ReleaseDetailCalls { get; private set; }
 
-            public Task<JsonElement> SearchReleasesAsync(string album, string? artist, int limit, CancellationToken ct)
-                => Task.FromResult(Parse(SearchJson));
+            public Task<IReadOnlyList<ScoredRelease>> SearchReleasesAsync(
+                string album,
+                string? artist,
+                int limit,
+                CancellationToken ct)
+                => Task.FromResult<IReadOnlyList<ScoredRelease>>(
+                    ReleaseJsonReader.ParseSearchReleases(Parse(SearchJson)));
 
-            public Task<JsonElement> GetReleaseGroupReleasesAsync(string rgMbid, CancellationToken ct)
-                => Task.FromResult(Parse(RgJson));
+            public Task<IReadOnlyList<ReleaseSummary>> GetReleaseGroupReleasesAsync(
+                string rgMbid,
+                CancellationToken ct)
+                => Task.FromResult<IReadOnlyList<ReleaseSummary>>(
+                    ReleaseJsonReader.ParseReleaseGroup(Parse(RgJson)));
 
-            public Task<JsonElement> GetReleaseAsync(string releaseMbid, CancellationToken ct)
+            public Task<ParsedRelease> GetReleaseAsync(string releaseMbid, CancellationToken ct)
             {
                 ReleaseDetailCalls++;
-                return Task.FromResult(Parse(ReleaseDetails.TryGetValue(releaseMbid, out var json) ? json : "{\"media\":[]}"));
+                return Task.FromResult(ReleaseTracklistParser.ParseRelease(Parse(
+                    ReleaseDetails.TryGetValue(releaseMbid, out var json) ? json : "{\"media\":[]}")));
             }
 
             public void Dispose()

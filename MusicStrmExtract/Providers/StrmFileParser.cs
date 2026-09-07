@@ -8,7 +8,7 @@ using System.Text.RegularExpressions;
 namespace MusicStrmExtract.Providers
 {
     /// <summary>
-    /// 解析 .strm 文件名与碟目录名中的碟号/轨号。
+    /// 解析 .strm 路径、文件名与碟目录名中的碟号/轨号。
     /// 单碟常见形态 "01 - 标题";碟+轨形态 "1-01", "01.01", "CD1-01", "Disc 1 - 01";
     /// 碟目录形态 "Disc 1", "CD2"。
     /// </summary>
@@ -33,6 +33,44 @@ namespace MusicStrmExtract.Providers
         private static readonly Regex CommentaryRegex = new Regex(
             @"\(?\s*(?:commentary|评论音轨|評論音轨|评论轨|評論轨|评论|評論|解说|解說)\s*\)?",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        /// <summary>路径是否指向 .strm 文件(大小写不敏感)。</summary>
+        public static bool IsStrmPath(string? path)
+        {
+            return !string.IsNullOrWhiteSpace(path)
+                && path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>按 strm 路径解析"艺人\专辑\碟"文件夹结构。
+        /// 返回 (专辑文件夹名, 艺人文件夹名, 专辑实际目录, 碟号);strm 直接在专辑目录时碟号为 null,
+        /// 位于 "Album/Disc N/" 时解析出碟号并上移一级专辑目录。</summary>
+        public static (string? AlbumFolder, string? ArtistFolder, string? AlbumDir, int? DiscNumber) GetFolderStructure(string strmPath)
+        {
+            var fileDir = Path.GetDirectoryName(strmPath);
+            if (string.IsNullOrWhiteSpace(fileDir))
+            {
+                return (null, null, null, null);
+            }
+
+            var discNumber = ParseDiscFolderName(Path.GetFileName(fileDir));
+            if (discNumber is not null && !string.IsNullOrWhiteSpace(Path.GetDirectoryName(fileDir)))
+            {
+                var albumDir = Path.GetDirectoryName(fileDir)!;
+                var artistDir = Path.GetDirectoryName(albumDir);
+                return (
+                    Path.GetFileName(albumDir),
+                    string.IsNullOrWhiteSpace(artistDir) ? null : Path.GetFileName(artistDir),
+                    albumDir,
+                    discNumber);
+            }
+
+            var artistDir2 = Path.GetDirectoryName(fileDir);
+            return (
+                Path.GetFileName(fileDir),
+                string.IsNullOrWhiteSpace(artistDir2) ? null : Path.GetFileName(artistDir2),
+                fileDir,
+                null);
+        }
 
         /// <summary>
         /// 解析 strm 文件名,返回 (碟号, 原始轨号, 是否评论轨)。

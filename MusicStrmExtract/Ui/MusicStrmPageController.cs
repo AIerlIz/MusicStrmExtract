@@ -52,11 +52,7 @@ namespace MusicStrmExtract.Ui
         public Task<IPluginUIView> CreateDefaultPageView()
         {
             var persisted = _loadOptions();
-            var options = new MusicStrmPageOptions
-            {
-                MusicBrainzBaseUrl = persisted.MusicBrainzBaseUrl,
-                CoverArtBaseUrl = persisted.CoverArtBaseUrl
-            };
+            var options = MusicStrmPageOptions.From(persisted);
 
             return Task.FromResult((IPluginUIView)new MusicStrmPageView(
                 _pluginId,

@@ -83,8 +83,7 @@ namespace MusicStrmExtract.Ui
         public Task<IPluginUIView> OnSaveCommand(string itemId, string commandId, string data)
         {
             var options = _loadOptions();
-            options.MusicBrainzBaseUrl = ContentData.MusicBrainzBaseUrl;
-            options.CoverArtBaseUrl = ContentData.CoverArtBaseUrl;
+            ContentData.ApplyTo(options);
             _saveOptions(options);
             RaiseInfoChanged();
             return Task.FromResult((IPluginUIView)this);

@@ -42,7 +42,7 @@
 - 找到首个 exact 后，只继续拉取真正同档的候选用于 CAA 决胜，避免逐个请求整个 release-group 的完整 tracklist。
 - 同分且双方 release 都缺年份/日期时仍属同档，应继续收集并交给 CAA 决胜。
 - 国家偏好只作用于最高基础分档，不能把低状态版本的分数抬到官方版本之上。
-- 搜索候选状态排序与 RG 评分分别在 `AlbumSearch.StatusRank`、`ReleaseGroupScorer.ScoreRelease` 维护；修改状态优先级时保持两处语义一致，并同步 `AlbumSearchSelectionTests` 和 `ReleaseGroupScorerTests`。
+- 搜索候选状态排序与 RG 评分统一在 `ReleaseStatusPolicy.SearchPriority` / `ScoreWeight` 维护，不要另写一套字符串分类；修改优先级时同步 `ReleaseStatusPolicyTests`、`AlbumSearchSelectionTests` 和 `ReleaseGroupScorerTests`。
 - 修改这些排序、提前返回或断点逻辑时，同步维护 `AlbumSearchSelectionTests` 和 `ReleaseGroupScorerTests`。
 
 ### MusicBrainz 限流

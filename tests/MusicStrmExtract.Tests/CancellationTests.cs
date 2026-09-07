@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -44,23 +45,33 @@ namespace MusicStrmExtract.Tests
                 _cts = cts;
             }
 
-            public Task<JsonElement> SearchReleasesAsync(string album, string? artist, int limit, CancellationToken ct)
+            public Task<IReadOnlyList<ScoredRelease>> SearchReleasesAsync(
+                string album,
+                string? artist,
+                int limit,
+                CancellationToken ct)
             {
                 _cts.Cancel();
-                return Task.FromResult(JsonDocument.Parse(
-                    "{\"releases\":[{\"id\":\"release-1\",\"score\":100,\"title\":\"Album\"," +
-                    "\"date\":\"2000-01-01\",\"status\":\"Official\",\"artist-credit\":[]," +
-                    "\"release-group\":{\"id\":\"rg-1\"}}]}").RootElement);
+                return Task.FromResult<IReadOnlyList<ScoredRelease>>(
+                    ReleaseJsonReader.ParseSearchReleases(Parse(
+                        "{\"releases\":[{\"id\":\"release-1\",\"score\":100,\"title\":\"Album\"," +
+                        "\"date\":\"2000-01-01\",\"status\":\"Official\",\"artist-credit\":[]," +
+                        "\"release-group\":{\"id\":\"rg-1\"}}]}")));
             }
 
-            public Task<JsonElement> GetReleaseGroupReleasesAsync(string rgMbid, CancellationToken ct)
+            public Task<IReadOnlyList<ReleaseSummary>> GetReleaseGroupReleasesAsync(
+                string rgMbid,
+                CancellationToken ct)
             {
                 _cts.Token.ThrowIfCancellationRequested();
-                return Task.FromResult(JsonDocument.Parse("{}").RootElement);
+                return Task.FromResult<IReadOnlyList<ReleaseSummary>>(
+                    Array.Empty<ReleaseSummary>());
             }
 
-            public Task<JsonElement> GetReleaseAsync(string releaseMbid, CancellationToken ct)
-                => Task.FromResult(JsonDocument.Parse("{}").RootElement);
+            public Task<ParsedRelease> GetReleaseAsync(string releaseMbid, CancellationToken ct)
+                => Task.FromResult(ReleaseTracklistParser.ParseRelease(Parse("{}")));
+
+            private static JsonElement Parse(string json) => JsonDocument.Parse(json).RootElement;
 
             public void Dispose()
             {

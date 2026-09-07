@@ -44,6 +44,11 @@ namespace MusicStrmExtract
 
         public static Plugin? Instance { get; private set; }
 
+        internal static PluginConfiguration GetConfiguration()
+        {
+            return Instance?.Configuration ?? new PluginConfiguration();
+        }
+
         /// <summary>当前插件配置。基类 Simple UI 会将其保存为 JSON,业务代码仍通过该属性读取。</summary>
         public PluginConfiguration Configuration => GetOptions();
 

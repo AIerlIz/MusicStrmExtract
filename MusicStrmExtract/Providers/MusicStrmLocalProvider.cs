@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -8,7 +7,6 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Configuration;
@@ -31,51 +29,31 @@ namespace MusicStrmExtract.Providers
     public sealed class MusicStrmLocalProvider : ILocalMetadataProvider<Audio>
     {
         private readonly ILogger _logger;
+        private readonly AlbumTrackMapLocator _albumLocator;
+        private readonly IMusicStrmConfigurationSource _configurationSource;
 
-        public MusicStrmLocalProvider(ILogManager logManager)
-        {
-            _logger = logManager.GetLogger("MusicStrmExtract");
-        }
-
-        public string Name => "Music Strm Extract";
-
-        /// <summary>按 strm 路径解析"艺人\专辑\碟"文件夹结构。
-        /// 返回 (专辑文件夹名, 艺人文件夹名, 专辑实际目录, 碟号);strm 直接在专辑目录时碟号为 null,
-        /// 位于 "Album/Disc N/" 时解析出碟号并上移一级专辑目录。</summary>
-        private static (string? AlbumFolder, string? ArtistFolder, string? AlbumDir, int? DiscNumber) GetFolderStructure(string strmPath)
-        {
-            var fileDir = Path.GetDirectoryName(strmPath);
-            if (string.IsNullOrWhiteSpace(fileDir))
-            {
-                return (null, null, null, null);
-            }
-
-            var discNumber = StrmFileParser.ParseDiscFolderName(Path.GetFileName(fileDir));
-            if (discNumber is not null && !string.IsNullOrWhiteSpace(Path.GetDirectoryName(fileDir)))
-            {
-                var albumDir = Path.GetDirectoryName(fileDir)!;
-                var artistDir = Path.GetDirectoryName(albumDir);
-                return (
-                    Path.GetFileName(albumDir),
-                    string.IsNullOrWhiteSpace(artistDir) ? null : Path.GetFileName(artistDir),
-                    albumDir,
-                    discNumber);
-            }
-
-            var artistDir2 = Path.GetDirectoryName(fileDir);
-            return (
-                Path.GetFileName(fileDir),
-                string.IsNullOrWhiteSpace(artistDir2) ? null : Path.GetFileName(artistDir2),
-                fileDir,
-                null);
-        }
-
-        /// <summary>专辑定位结果缓存(键=专辑文件夹|艺人文件夹;TTL 30 分钟,容量 500)。
-        /// 含整张专辑的轨道映射——同专辑后续 strm 条目零请求直接命中。</summary>
+        /// <summary>专辑定位结果缓存(键=专辑文件夹|艺人文件夹|碟布局|服务地址;TTL 30 分钟,容量 500)。
+        /// 过期项按插入序惰性清理,超容量只淘汰最旧条目。</summary>
         private static readonly TtlCache<AlbumSearchResult> AlbumCache =
             new TtlCache<AlbumSearchResult>(TimeSpan.FromMinutes(30), CacheMaxEntries);
 
         private const int CacheMaxEntries = 500;
+
+        public MusicStrmLocalProvider(ILogManager logManager)
+            : this(logManager, MusicStrmConfigurationSource.Default)
+        {
+        }
+
+        internal MusicStrmLocalProvider(
+            ILogManager logManager,
+            IMusicStrmConfigurationSource configurationSource)
+        {
+            _logger = logManager.GetLogger("MusicStrmExtract");
+            _configurationSource = configurationSource;
+            _albumLocator = new AlbumTrackMapLocator(_logger, AlbumCache);
+        }
+
+        public string Name => "Music Strm Extract";
 
         public async Task<MetadataResult<Audio>> GetMetadata(
             ItemInfo info,
@@ -84,16 +62,15 @@ namespace MusicStrmExtract.Providers
             CancellationToken cancellationToken)
         {
             var result = new MetadataResult<Audio>();
-            if (info?.Path is null
-                || !info.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
+            if (info?.Path is null || !StrmFileParser.IsStrmPath(info.Path))
             {
                 return result;
             }
 
-            var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+            var config = _configurationSource.Current;
 
             // ===== 主路径:专辑轨道定位(艺人/专辑文件夹 → MB release tracklist;零远程探测)=====
-            var (albumFolder, artistFolder, albumDir, discNumber) = GetFolderStructure(info.Path);
+            var (albumFolder, artistFolder, albumDir, discNumber) = StrmFileParser.GetFolderStructure(info.Path);
             if (!string.IsNullOrWhiteSpace(albumFolder)
                 && !string.IsNullOrWhiteSpace(albumDir)
                 && await TryResolveByAlbumTrackAsync(
@@ -123,8 +100,8 @@ namespace MusicStrmExtract.Providers
                 return false; // 本文件无轨号,无法按轨取数
             }
 
-            var (localDiscs, rawTracks) = ScanAlbumDiscs(albumDir, _logger);
-            if (localDiscs.Count == 0)
+            var scan = AlbumDirectoryScanner.Scan(albumDir, message => _logger.Warn(message));
+            if (scan.Discs.Count == 0)
             {
                 return false;
             }
@@ -132,11 +109,11 @@ namespace MusicStrmExtract.Providers
             AlbumSearchResult album;
             try
             {
-                album = await GetAlbumTrackMapAsync(
-                    BuildAlbumCacheKey(albumFolder, artistFolder, localDiscs, config),
+                album = await _albumLocator.GetOrSearchAsync(
+                    AlbumTrackMapLocator.BuildCacheKey(albumFolder, artistFolder, scan.Discs, config),
                     albumFolder,
                     artistFolder,
-                    localDiscs,
+                    scan.Discs,
                     config,
                     ct).ConfigureAwait(false);
             }
@@ -156,21 +133,21 @@ namespace MusicStrmExtract.Providers
                 return false;
             }
 
-            var mapping = AlbumSearch.MapLocalDiscsToMedias(localDiscs, album.Medias);
+            var mapping = ReleaseLayoutMatcher.MapLocalDiscsToMedias(scan.Discs, album.Medias);
             if (mapping is null)
             {
                 return false;
             }
 
-            var group = localDiscs.FirstOrDefault(d => d.DiscNumber == (folderDisc ?? fileDisc));
+            var group = scan.Discs.FirstOrDefault(d => d.DiscNumber == (folderDisc ?? fileDisc));
             if (group is null || !mapping.TryGetValue(group, out var media))
             {
                 return false;
             }
 
-            var rawRefs = rawTracks.TryGetValue(group.DiscNumber ?? 0, out var refs)
+            var rawRefs = scan.RawTracks.TryGetValue(group.DiscNumber ?? 0, out var refs)
                 ? refs
-                : new List<(int Number, bool IsCommentary)>();
+                : new List<TrackReference>();
             var selfNumber = StrmFileParser.MapCommentaryTrackNumber(
                 rawTrackNumber,
                 isCommentary,
@@ -205,16 +182,16 @@ namespace MusicStrmExtract.Providers
                 Album = album.Title,
                 ProductionYear = album.Year,
                 IndexNumber = track.Number,
-                ParentIndexNumber = group.DiscNumber is not null || localDiscs.Count > 1 ? media.Position : (int?)null,
+                ParentIndexNumber = group.DiscNumber is not null || scan.Discs.Count > 1 ? media.Position : (int?)null,
                 Artists = trackArtists,
                 AlbumArtists = albumArtists
             };
 
-            SetProviderId(item, "MusicBrainzTrack", track.RecordingMbid);
-            SetProviderId(item, "MusicBrainzAlbum", album.ReleaseMbid);
-            SetProviderId(item, "MusicBrainzArtist", track.ArtistMbid ?? album.AlbumArtistMbid);
-            SetProviderId(item, "MusicBrainzAlbumArtist", album.AlbumArtistMbid);
-            SetProviderId(item, "MusicBrainzReleaseGroup", album.ReleaseGroupMbid);
+            SetProviderId(item, PluginConstants.MusicBrainzTrack, track.RecordingMbid);
+            SetProviderId(item, PluginConstants.MusicBrainzAlbum, album.ReleaseMbid);
+            SetProviderId(item, PluginConstants.MusicBrainzArtist, track.ArtistMbid ?? album.AlbumArtistMbid);
+            SetProviderId(item, PluginConstants.MusicBrainzAlbumArtist, album.AlbumArtistMbid);
+            SetProviderId(item, PluginConstants.MusicBrainzReleaseGroup, album.ReleaseGroupMbid);
 
             result.Item = item;
             result.HasMetadata = true;
@@ -222,151 +199,6 @@ namespace MusicStrmExtract.Providers
 
             _logger.Info($"[MusicStrmExtract] [LocalProvider] 专辑轨道定位: '{albumFolder}' 碟 {media.Position} 轨 {track.Number} '{track.Title}' recordingMBID={track.RecordingMbid}");
             return true;
-        }
-
-        private async Task<AlbumSearchResult> GetAlbumTrackMapAsync(
-            string key,
-            string albumFolder,
-            string? artistFolder,
-            List<LocalDisc> localDiscs,
-            PluginConfiguration config,
-            CancellationToken ct)
-        {
-            if (AlbumCache.TryGet(key, out var cached))
-            {
-                return cached;
-            }
-
-            using var api = new MusicBrainzApi(
-                string.IsNullOrWhiteSpace(config.MusicBrainzBaseUrl) ? null : config.MusicBrainzBaseUrl);
-            var coverArt = new CoverArtClient(config.CoverArtBaseUrl);
-            var search = new AlbumSearch(api, coverArt);
-            var result = await search.SearchForTrackMapAsync(albumFolder, artistFolder, localDiscs, ct).ConfigureAwait(false);
-            ct.ThrowIfCancellationRequested();
-            AlbumCache.Set(key, result);
-            _logger.Info($"[MusicStrmExtract] [LocalProvider] 专辑定位: '{albumFolder}' -> " +
-                (result.Found
-                    ? $"'{result.Title}' releaseMBID={result.ReleaseMbid} 碟数={result.Medias.Count} 轨数={result.Medias.Sum(m => m.Tracks.Count)}"
-                    : "无命中/碟轨覆盖未通过"));
-            return result;
-        }
-
-        private static string BuildAlbumCacheKey(
-            string albumFolder,
-            string? artistFolder,
-            List<LocalDisc> localDiscs,
-            PluginConfiguration config)
-        {
-            // 对碟组按 DiscNumber 和 TrackNumbers 排序,保证目录枚举非确定性下缓存 Key 稳定
-            var layout = string.Join("|", localDiscs
-                .OrderBy(d => d.DiscNumber ?? int.MaxValue)
-                .Select(d =>
-                    (d.DiscNumber?.ToString(CultureInfo.InvariantCulture) ?? "_")
-                    + ":"
-                    + string.Join("-", d.TrackNumbers.OrderBy(n => n))));
-            var musicBrainzSource = string.IsNullOrWhiteSpace(config.MusicBrainzBaseUrl)
-                ? "official"
-                : config.MusicBrainzBaseUrl.Trim().TrimEnd('/');
-            var coverArtSource = string.IsNullOrWhiteSpace(config.CoverArtBaseUrl)
-                ? "official"
-                : config.CoverArtBaseUrl.Trim().TrimEnd('/');
-
-            // 服务地址也进 key:切换镜像后不应继续命中旧镜像缓存的专辑定位结果。
-            return $"{albumFolder}|{artistFolder}|{layout}|{musicBrainzSource}|{coverArtSource}";
-        }
-
-        /// <summary>
-        /// 扫描专辑目录上的 .strm(含 Disc N 子目录),构建本地碟组。
-        /// 评论轨与正式轨先按原始轨号收集,再做评论轨归一化,避免 1..26 交错轨号破坏 release 覆盖校验。
-        /// </summary>
-        private static (List<LocalDisc> Discs, Dictionary<int, List<(int Number, bool IsCommentary)>> RawTracks) ScanAlbumDiscs(string albumDir, ILogger logger)
-        {
-            // 解析结果中碟号只会是 null 或正整数,用 0 作为无碟号的字典键。
-            var rawGroups = new Dictionary<int, List<(int Number, bool IsCommentary)>>();
-            var seen = new HashSet<(int Disc, int Track, bool Commentary)>();
-
-            void AddTrack(int? disc, int number, bool isCommentary)
-            {
-                var key = disc ?? 0;
-                if (number <= 0 || !seen.Add((key, number, isCommentary)))
-                {
-                    return;
-                }
-
-                if (!rawGroups.TryGetValue(key, out var list))
-                {
-                    list = new List<(int Number, bool IsCommentary)>();
-                    rawGroups.Add(key, list);
-                }
-
-                list.Add((number, isCommentary));
-            }
-
-            try
-            {
-                foreach (var f in Directory.EnumerateFiles(albumDir))
-                {
-                    if (!f.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    var (disc, number, isCommentary) = StrmFileParser.ParseFileName(f);
-                    AddTrack(disc, number, isCommentary);
-                }
-
-                foreach (var sub in Directory.EnumerateDirectories(albumDir))
-                {
-                    var disc = StrmFileParser.ParseDiscFolderName(Path.GetFileName(sub));
-                    if (disc is null)
-                    {
-                        continue;
-                    }
-
-                    foreach (var f in Directory.EnumerateFiles(sub))
-                    {
-                        if (!f.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
-                        {
-                            continue;
-                        }
-
-                        var (_, number, isCommentary) = StrmFileParser.ParseFileName(f);
-                        AddTrack(disc, number, isCommentary);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                // 目录读取失败时返回已收集到的碟组;部分已收集的数据仍可用于定位
-                logger.Warn($"[MusicStrmExtract] [LocalProvider] 扫描专辑目录失败: Path={albumDir} -> {ex.Message}");
-            }
-
-            var result = new List<LocalDisc>();
-            foreach (var kv in rawGroups)
-            {
-                var raw = kv.Value;
-                var commentaryNumbers = raw.Where(r => r.IsCommentary).Select(r => r.Number).ToArray();
-                var regularNumbers = raw.Where(r => !r.IsCommentary).Select(r => r.Number).ToArray();
-                var group = new LocalDisc { DiscNumber = kv.Key == 0 ? null : kv.Key };
-                group.TrackNumbers.AddRange(raw
-                    .Select(r => StrmFileParser.MapCommentaryTrackNumber(r.Number, r.IsCommentary, commentaryNumbers, regularNumbers))
-                    .Where(n => n > 0)
-                    .Distinct());
-                result.Add(group);
-            }
-
-            result.Sort((a, b) =>
-            {
-                var an = a.DiscNumber ?? int.MaxValue;
-                var bn = b.DiscNumber ?? int.MaxValue;
-                return an.CompareTo(bn);
-            });
-            foreach (var g in result)
-            {
-                g.TrackNumbers.Sort();
-            }
-
-            return (result, rawGroups);
         }
 
         private static void SetProviderId(Audio item, string key, string? value)

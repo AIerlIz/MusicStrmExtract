@@ -24,9 +24,16 @@ namespace MusicStrmExtract.Providers
     public sealed class MusicStrmRemoteProvider : IRemoteMetadataProvider<Audio, SongInfo>, IDisposable
     {
         private HttpClient? _http;
+        private readonly IMusicStrmConfigurationSource _configurationSource;
 
         public MusicStrmRemoteProvider(ILogManager logManager)
+            : this(MusicStrmConfigurationSource.Default)
         {
+        }
+
+        internal MusicStrmRemoteProvider(IMusicStrmConfigurationSource configurationSource)
+        {
+            _configurationSource = configurationSource;
             _http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
             _http.DefaultRequestHeaders.UserAgent.ParseAdd(PluginConstants.UserAgent);
         }
@@ -75,15 +82,15 @@ namespace MusicStrmExtract.Providers
             // 常规路径:条目刷新后已带 MusicBrainzAlbum ProviderId,直接指向 Cover Art Archive。
             // 无 Album ID 时无封面可给(不做同步在线解析,避免阻塞引擎图片流程)。
             var images = new List<RemoteImageInfo>();
-            if (info is null || !IsStrmPath(info.Path))
+            if (info is null || !StrmFileParser.IsStrmPath(info.Path))
             {
                 return Task.FromResult((IEnumerable<RemoteImageInfo>)Array.Empty<RemoteImageInfo>());
             }
 
-            var albumId = info.GetProviderId("MusicBrainzAlbum");
+            var albumId = info.GetProviderId(PluginConstants.MusicBrainzAlbum);
             if (!string.IsNullOrWhiteSpace(albumId))
             {
-                var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+                var config = _configurationSource.Current;
                 var coverArt = new CoverArtClient(config.CoverArtBaseUrl);
                 images.Add(new RemoteImageInfo
                 {
@@ -94,12 +101,6 @@ namespace MusicStrmExtract.Providers
             }
 
             return Task.FromResult((IEnumerable<RemoteImageInfo>)images);
-        }
-
-        internal static bool IsStrmPath(string? path)
-        {
-            return !string.IsNullOrWhiteSpace(path)
-                && path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase);
         }
     }
 }

@@ -1,3 +1,4 @@
+using System.IO;
 using System.Linq;
 
 using MusicStrmExtract.Providers;
@@ -37,6 +38,45 @@ namespace MusicStrmExtract.Tests
             Assert.Null(disc);
             Assert.Equal(0, track);
             Assert.False(isCommentary);
+        }
+
+        [Theory]
+        [InlineData(@"C:\music\Album\01 - Track.flac.strm", true)]
+        [InlineData(@"C:\music\Album\01 - Track.m4a.strm", true)]
+        [InlineData(@"C:\music\Album\01 - Track.flac", false)]
+        [InlineData("", false)]
+        [InlineData(null, false)]
+        public void IsStrmPath_OnlyAcceptsStrmSuffix(string? path, bool expected)
+        {
+            Assert.Equal(expected, StrmFileParser.IsStrmPath(path));
+        }
+
+        [Fact]
+        public void GetFolderStructure_DiscFolder_MovesUpToAlbum()
+        {
+            var albumDir = Path.Combine(Path.GetTempPath(), "MusicStrmExtract", "Artist", "Album");
+            var file = Path.Combine(albumDir, "Disc 1", "01 - Track.flac.strm");
+
+            var (albumFolder, artistFolder, actualAlbumDir, disc) = StrmFileParser.GetFolderStructure(file);
+
+            Assert.Equal("Album", albumFolder);
+            Assert.Equal("Artist", artistFolder);
+            Assert.Equal(albumDir, actualAlbumDir);
+            Assert.Equal(1, disc);
+        }
+
+        [Fact]
+        public void GetFolderStructure_AlbumRoot_KeepsCurrentDirectory()
+        {
+            var albumDir = Path.Combine(Path.GetTempPath(), "MusicStrmExtract", "Artist", "Album");
+            var file = Path.Combine(albumDir, "01 - Track.flac.strm");
+
+            var (albumFolder, artistFolder, actualAlbumDir, disc) = StrmFileParser.GetFolderStructure(file);
+
+            Assert.Equal("Album", albumFolder);
+            Assert.Equal("Artist", artistFolder);
+            Assert.Equal(albumDir, actualAlbumDir);
+            Assert.Null(disc);
         }
 
         [Fact]
