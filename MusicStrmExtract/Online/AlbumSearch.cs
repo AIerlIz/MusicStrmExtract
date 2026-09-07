@@ -77,10 +77,35 @@ namespace MusicStrmExtract.Online
                 scored.Select(s => s.Release).ToList(),
                 localDiscs);
 
-            // 本地目录文本已作为查询条件交给 MB,不再做字形过滤;稳定排序只按 MB 元数据:
-            // status(Official 0 < Promotional/Unknown 1 < Bootleg/Withdrawn 2 < Pseudo-Release 3) -> 主类型 Album -> 完整日期优先 -> 日期最早
-            // (空日期排最后)-> score 降序 -> 官方名(字典序)
-            var ordered = scored
+            var ordered = OrderSearchCandidates(scored, preferredCountry);
+            var state = new SearchState();
+
+            // 尝试用 release-group 全量加权评分选出最优版本;没有 exact 时保留已看到的布局候选,
+            // 继续走搜索回退路径,避免当前 RG 无精确版本时错过其它 RG 的精确命中。
+            var rgResult = await TryResolveFromReleaseGroupAsync(
+                ordered[0],
+                localDiscs,
+                JsonUtil.ParseYear(albumFolderName),
+                state,
+                ct).ConfigureAwait(false);
+            if (rgResult is not null)
+            {
+                return rgResult;
+            }
+
+            return await TryResolveFromOrderedCandidatesAsync(ordered, localDiscs, state, ct).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// 稳定排序:本地目录文本已作为查询条件交给 MB,不再做字形过滤;
+        /// status(Official 0 < Promotional/Unknown 1 < Bootleg/Withdrawn 2 < Pseudo-Release 3) -> 主类型 Album -> 完整日期优先 -> 日期最早
+        /// (空日期排最后)-> score 降序 -> 官方名(字典序)
+        /// </summary>
+        private static List<ScoredRelease> OrderSearchCandidates(
+            List<ScoredRelease> scored,
+            string? preferredCountry)
+        {
+            return scored
                 .OrderBy(s => ReleaseStatusPolicy.SearchPriority(s.Release.Status))
                 .ThenBy(s => string.Equals(s.Release.PrimaryType, "Album", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
                 .ThenBy(s => IsIncompleteDate(s.Release.Date) ? 1 : 0)
@@ -90,94 +115,110 @@ namespace MusicStrmExtract.Online
                 .ThenBy(s => s.Release.Title!, StringComparer.Ordinal)
                 .Take(MaxCandidateReleases)
                 .ToList();
+        }
 
-            // 尝试用 release-group 全量加权评分选出最优版本:
-            // 从 top-1 候选取 release-group-id,拉取该 RG 下全部 release,按 barcode/status/格式等维度打分。
-            // 若 RG 查询失败、仅有一个 release、或全部不满足布局校验,回退到原有 top-10 排序逻辑。
-            AlbumSearchResult? firstFallback = null;
-            string? firstFallbackMbid = null;
-            var topRgMbid = ordered[0].Release.ReleaseGroupMbid;
-            if (!string.IsNullOrWhiteSpace(topRgMbid))
+        /// <summary>
+        /// RG 加权路径:从 top-1 候选取 release-group-id,拉取该 RG 下全部 release 评分;
+        /// 只收集顶级分数档的精确命中并交给 CAA 决胜。失败或没有 exact 时返回 null 走搜索回退。
+        /// </summary>
+        private async Task<AlbumSearchResult?> TryResolveFromReleaseGroupAsync(
+            ScoredRelease topCandidate,
+            IReadOnlyList<LocalDisc> localDiscs,
+            int? localYear,
+            SearchState state,
+            CancellationToken ct)
+        {
+            var topRgMbid = topCandidate.Release.ReleaseGroupMbid;
+            if (string.IsNullOrWhiteSpace(topRgMbid))
             {
-                try
-                {
-                    var rgReleases = await _api.GetReleaseGroupReleasesAsync(topRgMbid, ct).ConfigureAwait(false);
-                    if (rgReleases.Count > 1)
-                    {
-                        var localYear = JsonUtil.ParseYear(albumFolderName);
-                        // 从 RG 全量候选推断偏好国家(比搜索样本更准),并传给评分
-                        var rgPreferredCountry = ReleaseGroupScorer.InferPreferredCountry(rgReleases, localDiscs);
-                        var ranked = ReleaseGroupScorer.ScoreAll(rgReleases, localYear, rgPreferredCountry);
-
-                        // 只收集"顶级分数档"且精确轨数命中的候选,再用封面数(CAA)打破残余并列;
-                        // 顶级分数档之外的命中不可能靠封面数胜出,无需继续收集(有界 CAA 请求)。
-                        var exactCandidates = new List<ExactCandidate>();
-                        foreach (var rankedRelease in ranked)
-                        {
-                            var release = rankedRelease.Release;
-                            if (string.IsNullOrWhiteSpace(release.Id))
-                            {
-                                continue;
-                            }
-
-                            // 已找到首个 exact 后,只有真正同档的候选才值得继续拉详情做 CAA 决胜。
-                            if (exactCandidates.Count > 0
-                                && !ReleaseGroupScorer.AreInSameRankingTier(
-                                    release,
-                                    exactCandidates[0].Release,
-                                    rankedRelease.Score,
-                                    exactCandidates[0].Score,
-                                    localYear))
-                            {
-                                break;
-                            }
-
-                            var parsed = await _api.GetReleaseAsync(release.Id, ct).ConfigureAwait(false);
-                            if (parsed.Medias.Count == 0)
-                            {
-                                continue;
-                            }
-
-                            var mapping = ReleaseLayoutMatcher.MapLocalDiscsToMedias(localDiscs, parsed.Medias);
-                            if (mapping is null)
-                            {
-                                continue;
-                            }
-
-                            if (ReleaseLayoutMatcher.HasExactTrackCount(localDiscs, mapping))
-                            {
-                                exactCandidates.Add(new ExactCandidate(release, parsed, rankedRelease.Score));
-                            }
-                            else
-                            {
-                                firstFallback ??= BuildAlbumResult(parsed.Release, parsed.Medias);
-                                firstFallbackMbid ??= release.Id;
-                            }
-                        }
-
-                        if (exactCandidates.Count > 0)
-                        {
-                            return await PickExactByCoverAsync(exactCandidates, ct).ConfigureAwait(false);
-                        }
-
-                        // RG 路径没有 exact 时不直接返回 firstFallback:
-                        // 搜索中更低顺位的其它 RG 可能才是轨数完全一致的版本,继续走下方 top-10 循环。
-                    }
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
-                {
-                    // RG 查询失败,降级到下方原有 top-10 循环
-                }
+                return null;
             }
 
-            // 逐个候选取 tracklist,用本地碟组布局校验 media 映射;
-            // 轨数完全一致(每碟本地轨数 == release media 轨数)优先,避免普通版被豪华版/加歌版抢先选中。
-            // 注意:release 详情取回的网络/解析异常向上抛,由调用方区分"MB 不可达(不缓存)"与"确认未命中";
-            // 吞成 Found=false 会让暂时性故障被 30 分钟缓存锁死。
+            try
+            {
+                var rgReleases = await _api.GetReleaseGroupReleasesAsync(topRgMbid, ct).ConfigureAwait(false);
+                if (rgReleases.Count <= 1)
+                {
+                    return null;
+                }
+
+                // 从 RG 全量候选推断偏好国家(比搜索样本更准),并传给评分
+                var rgPreferredCountry = ReleaseGroupScorer.InferPreferredCountry(rgReleases, localDiscs);
+                var ranked = ReleaseGroupScorer.ScoreAll(rgReleases, localYear, rgPreferredCountry);
+
+                // 顶级分数档之外的命中不可能靠封面数胜出,无需继续收集(有界 CAA 请求)。
+                var exactCandidates = new List<ExactCandidate>();
+                foreach (var rankedRelease in ranked)
+                {
+                    var release = rankedRelease.Release;
+                    if (string.IsNullOrWhiteSpace(release.Id))
+                    {
+                        continue;
+                    }
+
+                    // 已找到首个 exact 后,只有真正同档的候选才值得继续拉详情做 CAA 决胜。
+                    if (exactCandidates.Count > 0
+                        && !ReleaseGroupScorer.AreInSameRankingTier(
+                            release,
+                            exactCandidates[0].Release,
+                            rankedRelease.Score,
+                            exactCandidates[0].Score,
+                            localYear))
+                    {
+                        break;
+                    }
+
+                    var parsed = await _api.GetReleaseAsync(release.Id, ct).ConfigureAwait(false);
+                    if (parsed.Medias.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    var mapping = ReleaseLayoutMatcher.MapLocalDiscsToMedias(localDiscs, parsed.Medias);
+                    if (mapping is null)
+                    {
+                        continue;
+                    }
+
+                    if (ReleaseLayoutMatcher.HasExactTrackCount(localDiscs, mapping))
+                    {
+                        exactCandidates.Add(new ExactCandidate(release, parsed, rankedRelease.Score));
+                    }
+                    else
+                    {
+                        SetFallback(state, parsed.Release, parsed.Medias);
+                    }
+                }
+
+                if (exactCandidates.Count > 0)
+                {
+                    return await PickExactByCoverAsync(exactCandidates, ct).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+            {
+                // RG 查询/评分失败,降级到搜索候选回退
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// 逐个搜索候选取 tracklist,用本地碟组布局校验 media 映射;
+        /// 轨数完全一致(每碟本地轨数 == release media 轨数)优先,避免普通版被豪华版/加歌版抢先选中。
+        /// 注意:release 详情取回的网络/解析异常向上抛,由调用方区分"MB 不可达(不缓存)"与"确认未命中";
+        /// 吞成 Found=false 会让暂时性故障被 30 分钟缓存锁死。
+        /// </summary>
+        private async Task<AlbumSearchResult> TryResolveFromOrderedCandidatesAsync(
+            IReadOnlyList<ScoredRelease> ordered,
+            IReadOnlyList<LocalDisc> localDiscs,
+            SearchState state,
+            CancellationToken ct)
+        {
             foreach (var scoredRelease in ordered)
             {
                 var release = scoredRelease.Release;
@@ -186,7 +227,7 @@ namespace MusicStrmExtract.Online
                     continue;
                 }
 
-                if (string.Equals(firstFallbackMbid, release.Id, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(state.FirstFallbackMbid, release.Id, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
@@ -208,10 +249,10 @@ namespace MusicStrmExtract.Online
                     return BuildAlbumResult(parsed.Release, parsed.Medias);
                 }
 
-                firstFallback ??= BuildAlbumResult(parsed.Release, parsed.Medias);
+                SetFallback(state, parsed.Release, parsed.Medias);
             }
 
-            return firstFallback ?? result;
+            return state.FirstFallback ?? new AlbumSearchResult();
         }
 
         private static AlbumSearchResult BuildAlbumResult(
@@ -239,6 +280,20 @@ namespace MusicStrmExtract.Online
             }
 
             return result;
+        }
+
+        private static void SetFallback(
+            SearchState state,
+            ReleaseSummary release,
+            IReadOnlyList<ReleaseMedia> medias)
+        {
+            if (state.FirstFallback is not null || string.IsNullOrWhiteSpace(release.Id))
+            {
+                return;
+            }
+
+            state.FirstFallback = BuildAlbumResult(release, medias);
+            state.FirstFallbackMbid = release.Id;
         }
 
         /// <summary>在顶级分数档的精确命中候选中,用 Cover Art Archive 封面数打破残余并列;单候选直接返回。</summary>
@@ -273,6 +328,13 @@ namespace MusicStrmExtract.Online
         private static bool IsIncompleteDate(string? date)
         {
             return !JsonUtil.IsCompleteDate(date);
+        }
+
+        private sealed class SearchState
+        {
+            public AlbumSearchResult? FirstFallback { get; set; }
+
+            public string? FirstFallbackMbid { get; set; }
         }
 
         private sealed record ExactCandidate(ReleaseSummary Release, ParsedRelease Parsed, int Score);
