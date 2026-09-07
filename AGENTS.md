@@ -51,6 +51,6 @@
 - 涉及新增 MusicBrainz 请求入口时统一走 `GetJsonRootAsync`，不要绕过缓存与限流直接发 `HttpClient`；测试中注入 `IHttpTransport` / `IRequestGate`。
 
 ### 发版与验证
-- 项目版本号需要手动同步：发新 tag 前更新 `MusicStrmExtract.csproj` 的 `Version`、`AssemblyVersion`、`FileVersion`。当前已同步为 `1.7.0.0`。
+- 项目版本号需要手动同步：发新 tag 前更新 `MusicStrmExtract.csproj` 的 `Version`、`AssemblyVersion`、`FileVersion`。当前已同步为 `1.7.1.0`。
 - 常规验证命令：`dotnet test tests\MusicStrmExtract.Tests\MusicStrmExtract.Tests.csproj -c Release --no-restore --nologo`。
 - 涉及封面、直写或刷新流程的改动，发布前建议连接 Emby Server 跑一次媒体库刷新。
