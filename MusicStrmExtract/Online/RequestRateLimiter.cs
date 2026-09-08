@@ -10,7 +10,7 @@ namespace MusicStrmExtract.Online
         Task<IDisposable> AcquireAsync(CancellationToken ct);
     }
 
-    internal sealed class RequestRateLimiter : IRequestGate
+    internal sealed class RequestRateLimiter : IRequestGate, IDisposable
     {
         private readonly SemaphoreSlim _gate = new SemaphoreSlim(1, 1);
         private readonly TimeSpan _minimumInterval;
@@ -48,6 +48,11 @@ namespace MusicStrmExtract.Online
                 _gate.Release();
                 throw;
             }
+        }
+
+        public void Dispose()
+        {
+            _gate.Dispose();
         }
 
         private sealed class Lease : IDisposable

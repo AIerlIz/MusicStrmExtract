@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -20,6 +21,8 @@ namespace MusicStrmExtract.Providers
     {
         private readonly ILogger _logger;
         private readonly TtlCache<AlbumSearchResult> _cache;
+        private readonly ConcurrentDictionary<string, Task<AlbumSearchResult>> _inflight =
+            new ConcurrentDictionary<string, Task<AlbumSearchResult>>(StringComparer.Ordinal);
 
         public AlbumTrackMapLocator(ILogger logger, TtlCache<AlbumSearchResult> cache)
         {
@@ -40,6 +43,32 @@ namespace MusicStrmExtract.Providers
                 return cached;
             }
 
+            var task = _inflight.GetOrAdd(cacheKey, _ => SearchCoreAsync(
+                cacheKey,
+                albumFolder,
+                artistFolder,
+                localDiscs,
+                config,
+                ct));
+            try
+            {
+                return await task.ConfigureAwait(false);
+            }
+            finally
+            {
+                _inflight.TryRemove(
+                    new KeyValuePair<string, Task<AlbumSearchResult>>(cacheKey, task));
+            }
+        }
+
+        private async Task<AlbumSearchResult> SearchCoreAsync(
+            string cacheKey,
+            string albumFolder,
+            string? artistFolder,
+            IReadOnlyList<LocalDisc> localDiscs,
+            PluginConfiguration config,
+            CancellationToken ct)
+        {
             using var api = new MusicBrainzApi(
                 string.IsNullOrWhiteSpace(config.MusicBrainzBaseUrl) ? null : config.MusicBrainzBaseUrl);
             var coverArt = new CoverArtClient(config.CoverArtBaseUrl);

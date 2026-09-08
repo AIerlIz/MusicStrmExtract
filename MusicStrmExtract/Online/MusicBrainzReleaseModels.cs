@@ -31,7 +31,7 @@ namespace MusicStrmExtract.Online
     public sealed record ScoredRelease(ReleaseSummary Release, int Score);
 
     /// <summary>
-    /// MusicBrainz release-group(专辑这个概念实体)及其下全部 release(可购买的发行版本)。
+    /// MusicBrainz release-group(专辑这个概念实体)及其下返回的 release(可购买的发行版本)。
     /// 每个 release 只属于一个 release-group;同一 RG 可能包含不同国家/介质/豪华/再版版本。
     /// </summary>
     public sealed record ParsedReleaseGroup(

@@ -10,7 +10,7 @@ using MediaBrowser.Model.Plugins.UI.Views;
 namespace MusicStrmExtract.Ui
 {
     /// <summary>完整 Plugin UI 页面:负责把 UI 值保存回现有 JSON 配置,并转发按钮命令到修复服务。</summary>
-    internal sealed class MusicStrmPageView : IPluginPageView
+    internal sealed class MusicStrmPageView : IPluginPageView, IDisposable
     {
         private readonly Func<PluginConfiguration> _loadOptions;
         private readonly Action<PluginConfiguration> _saveOptions;
@@ -103,6 +103,11 @@ namespace MusicStrmExtract.Ui
             return Task.CompletedTask;
         }
 
+        public void Dispose()
+        {
+            Cancel();
+        }
+
         public void OnDialogResult(IPluginUIView dialogView, bool completedOk, object data)
         {
         }
@@ -119,7 +124,7 @@ namespace MusicStrmExtract.Ui
                 {
                     try
                     {
-                        var progress = new Progress<string>(message =>
+                        var progress = new SynchronousProgress<string>(message =>
                         {
                             if (!ct.IsCancellationRequested)
                             {
@@ -155,6 +160,21 @@ namespace MusicStrmExtract.Ui
         {
             ContentData.ResultLabel.Text = message;
             RaiseInfoChanged();
+        }
+
+        private sealed class SynchronousProgress<T> : IProgress<T>
+        {
+            private readonly Action<T> _handler;
+
+            public SynchronousProgress(Action<T> handler)
+            {
+                _handler = handler ?? throw new ArgumentNullException(nameof(handler));
+            }
+
+            public void Report(T value)
+            {
+                _handler(value);
+            }
         }
     }
 }

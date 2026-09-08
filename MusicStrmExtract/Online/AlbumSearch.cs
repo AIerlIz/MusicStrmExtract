@@ -19,8 +19,8 @@ namespace MusicStrmExtract.Online
     /// </summary>
     public sealed class AlbumSearch
     {
-        /// <summary>逐个尝试的候选 release 上限;布局不匹配时继续尝试下一个,避免多碟选到错误的单碟版本。</summary>
-        public const int MaxCandidateReleases = 5;
+        /// <summary>搜索结果一次取回的候选数量;布局不匹配时继续尝试下一个。</summary>
+        private const int SearchCandidateLimit = 10;
 
         private readonly IMusicBrainzApi _api;
         private readonly ICoverArtClient _coverArtClient;
@@ -32,17 +32,41 @@ namespace MusicStrmExtract.Online
         }
 
         /// <summary>去除专辑名中的年份/附加括号等,得到核心名:"叶惠美 (2003)"→"叶惠美","七里香-2004"→"七里香"。</summary>
-        public static string? CleanAlbumName(string? raw)
+        public static string? CleanAlbumName(string? raw, string? artistName = null)
         {
             if (string.IsNullOrWhiteSpace(raw))
             {
                 return null;
             }
 
-            var s = raw.Trim();
+            var trimmed = raw.Trim();
+            // 同名专辑目录(如 "The 1975" 的艺人自名专辑)不应把标题年份当发行年份剥掉。
+            if (!string.IsNullOrWhiteSpace(artistName)
+                && string.Equals(trimmed, artistName.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return trimmed;
+            }
+
+            var s = trimmed;
             s = Regex.Replace(s, @"[\s_\-\.]*[\(\[（【]?\s*(18|19|20)\d{2}\s*[\)\]）】]?\s*$", string.Empty);
             s = Regex.Replace(s, @"[\s\-\._]+$", string.Empty);
-            return string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+            return string.IsNullOrWhiteSpace(s) ? trimmed : s.Trim();
+        }
+
+        /// <summary>目录名被清洗掉年份后缀时，解析该发行年份；同名自名专辑标题年份不算发行年份。</summary>
+        internal static int? ParseFolderYear(string? albumFolderName, string? artistName)
+        {
+            var trimmed = albumFolderName?.Trim();
+            var clean = CleanAlbumName(trimmed, artistName);
+            if (string.IsNullOrWhiteSpace(trimmed)
+                || string.IsNullOrWhiteSpace(clean)
+                || string.Equals(trimmed, clean, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            var match = Regex.Match(trimmed, @"\b(1[89]\d{2}|20\d{2})\s*[\)\]）】]?\s*$");
+            return match.Success ? int.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) : (int?)null;
         }
 
         /// <summary>
@@ -58,7 +82,7 @@ namespace MusicStrmExtract.Online
             CancellationToken ct)
         {
             var result = AlbumSearchResult.Empty;
-            var clean = CleanAlbumName(albumFolderName);
+            var clean = CleanAlbumName(albumFolderName, artistName);
             if (string.IsNullOrWhiteSpace(clean)
                 || localDiscs is null
                 || localDiscs.Count == 0
@@ -67,7 +91,7 @@ namespace MusicStrmExtract.Online
                 return result;
             }
 
-            var scored = (await _api.SearchReleasesAsync(clean, artistName, 10, ct).ConfigureAwait(false))
+            var scored = (await _api.SearchReleasesAsync(clean, artistName, SearchCandidateLimit, ct).ConfigureAwait(false))
                 .Where(s => s.Score > 0 && !string.IsNullOrWhiteSpace(s.Release.Title))
                 .ToList();
             if (scored.Count == 0)
@@ -83,12 +107,12 @@ namespace MusicStrmExtract.Online
             var ordered = OrderSearchCandidates(scored, preferredCountry);
             var state = new SearchState();
 
-            // 尝试用 release-group(专辑概念)下的全部 release 分层评分选出最优实体版本;没有 exact 时保留已看到的布局候选,
+            // 尝试用 release-group lookup 返回的 release 候选分层评分选出最优实体版本;没有 exact 时保留已看到的布局候选,
             // 继续走搜索回退路径,避免当前 RG 无精确版本时错过其它 RG 的精确命中。
             var rgResult = await TryResolveFromReleaseGroupAsync(
                 ordered[0],
                 localDiscs,
-                JsonUtil.ParseYear(albumFolderName),
+                ParseFolderYear(albumFolderName, artistName),
                 state,
                 ct).ConfigureAwait(false);
             if (rgResult is not null)
@@ -116,12 +140,12 @@ namespace MusicStrmExtract.Online
                 .ThenBy(s => string.Equals(s.Release.Country, preferredCountry, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
                 .ThenByDescending(s => s.Score)
                 .ThenBy(s => s.Release.Title!, StringComparer.Ordinal)
-                .Take(MaxCandidateReleases)
                 .ToList();
         }
 
         /// <summary>
-        /// RG 加权路径:从 top-1 候选取 release-group-id,拉取专辑概念下全部 release 评分;
+        /// RG 加权路径:从 top-1 候选取 release-group-id,对 lookup 返回的 release 候选评分;
+        /// MusicBrainz lookup 的 linked releases 有 25 条上限,缺失候选依赖下方搜索回退补充。
         /// 只收集顶级分数档的精确命中并交给 CAA 决胜。失败或没有 exact 时返回 null 走搜索回退。
         /// </summary>
         private async Task<AlbumSearchResult?> TryResolveFromReleaseGroupAsync(
@@ -145,7 +169,7 @@ namespace MusicStrmExtract.Online
                     return null;
                 }
 
-                // 从 RG 全量候选推断偏好国家(比搜索样本更准),并传给评分
+                // 从 RG lookup 候选推断偏好国家(比搜索样本更准),并传给评分
                 var rgPreferredCountry = ReleaseGroupScorer.InferPreferredCountry(rg.Releases, localDiscs);
                 var ranked = ReleaseGroupScorer.ScoreAll(rg.Releases, localYear, rgPreferredCountry);
 
@@ -181,7 +205,7 @@ namespace MusicStrmExtract.Online
                         continue;
                     }
 
-                    if (ReleaseLayoutMatcher.HasExactTrackCount(localDiscs, mapping))
+                    if (ReleaseLayoutMatcher.HasExactTrackCount(localDiscs, mapping, parsed.Medias))
                     {
                         exactCandidates.Add(new ExactCandidate(rankedRelease, parsed));
                     }
@@ -245,7 +269,7 @@ namespace MusicStrmExtract.Online
                     continue;
                 }
 
-                if (ReleaseLayoutMatcher.HasExactTrackCount(localDiscs, mapping))
+                if (ReleaseLayoutMatcher.HasExactTrackCount(localDiscs, mapping, parsed.Medias))
                 {
                     return BuildAlbumResult(parsed.Release, parsed.Medias, null);
                 }

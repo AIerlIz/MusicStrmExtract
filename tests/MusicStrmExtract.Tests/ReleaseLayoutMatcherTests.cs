@@ -84,13 +84,14 @@ namespace MusicStrmExtract.Tests
             var local = new LocalDisc();
             local.TrackNumbers.AddRange(Enumerable.Range(1, 10));
             var root = TestReleaseJson.BuildRelease((1, TestReleaseJson.Tracks(1, 10)));
+            var medias = ReleaseTracklistParser.ParseReleaseMedias(root);
 
             var map = ReleaseLayoutMatcher.MapLocalDiscsToMedias(
                 new[] { local },
-                ReleaseTracklistParser.ParseReleaseMedias(root));
+                medias);
 
             Assert.NotNull(map);
-            Assert.True(ReleaseLayoutMatcher.HasExactTrackCount(new[] { local }, map!));
+            Assert.True(ReleaseLayoutMatcher.HasExactTrackCount(new[] { local }, map!, medias));
         }
 
         [Fact]
@@ -102,13 +103,31 @@ namespace MusicStrmExtract.Tests
                 .Concat(new[] { (11, "Bonus A"), (12, "Bonus B") })
                 .ToArray();
             var root = TestReleaseJson.BuildRelease((1, bonusTracks));
+            var medias = ReleaseTracklistParser.ParseReleaseMedias(root);
 
             var map = ReleaseLayoutMatcher.MapLocalDiscsToMedias(
                 new[] { local },
-                ReleaseTracklistParser.ParseReleaseMedias(root));
+                medias);
 
             Assert.NotNull(map);
-            Assert.False(ReleaseLayoutMatcher.HasExactTrackCount(new[] { local }, map!));
+            Assert.False(ReleaseLayoutMatcher.HasExactTrackCount(new[] { local }, map!, medias));
+        }
+
+        [Fact]
+        public void HasExactTrackCount_FalseWhenLocalOnlyCoversOneDiscOfMultiDiscRelease()
+        {
+            var local = TestReleaseJson.LocalDisc(null, 1, 2, 3);
+            var root = TestReleaseJson.BuildRelease(
+                (1, TestReleaseJson.Tracks(1, 3)),
+                (2, TestReleaseJson.Tracks(1, 2)));
+            var medias = ReleaseTracklistParser.ParseReleaseMedias(root);
+
+            var map = ReleaseLayoutMatcher.MapLocalDiscsToMedias(
+                new[] { local },
+                medias);
+
+            Assert.NotNull(map);
+            Assert.False(ReleaseLayoutMatcher.HasExactTrackCount(new[] { local }, map!, medias));
         }
 
         [Fact]
@@ -121,13 +140,14 @@ namespace MusicStrmExtract.Tests
             var root = TestReleaseJson.BuildRelease(
                 (1, TestReleaseJson.Tracks(1, 17)),
                 (2, TestReleaseJson.Tracks(1, 13)));
+            var medias = ReleaseTracklistParser.ParseReleaseMedias(root);
 
             var map = ReleaseLayoutMatcher.MapLocalDiscsToMedias(
                 new[] { disc1, disc2 },
-                ReleaseTracklistParser.ParseReleaseMedias(root));
+                medias);
 
             Assert.NotNull(map);
-            Assert.True(ReleaseLayoutMatcher.HasExactTrackCount(new[] { disc1, disc2 }, map!));
+            Assert.True(ReleaseLayoutMatcher.HasExactTrackCount(new[] { disc1, disc2 }, map!, medias));
         }
 
     }

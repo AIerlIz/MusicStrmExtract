@@ -189,7 +189,9 @@ namespace MusicStrmExtract.Providers
 
             SetProviderId(item, PluginConstants.MusicBrainzTrack, track.RecordingMbid);
             SetProviderId(item, PluginConstants.MusicBrainzAlbum, album.ReleaseMbid);
-            SetProviderId(item, PluginConstants.MusicBrainzArtist, track.ArtistMbid ?? album.AlbumArtistMbid);
+            // 曲目已有独立艺人信息时不能回退到专辑艺人 MBID，避免不同艺人被错误合并。
+            var artistMbid = track.Artists.Count == 0 ? album.AlbumArtistMbid : track.ArtistMbid;
+            SetProviderId(item, PluginConstants.MusicBrainzArtist, artistMbid);
             SetProviderId(item, PluginConstants.MusicBrainzAlbumArtist, album.AlbumArtistMbid);
             SetProviderId(item, PluginConstants.MusicBrainzReleaseGroup, album.ReleaseGroupMbid);
 

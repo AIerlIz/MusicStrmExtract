@@ -81,6 +81,58 @@ namespace MusicStrmExtract.Tests
             Assert.Equal(audio.InternalId, queued.Item1);
         }
 
+        [Fact]
+        public void Run_QueuesStrmLinkingStaleAlbumEvenWithoutAlbumMbid()
+        {
+            var context = new RepairContext();
+            var stale = new MusicAlbum { Name = "Stale", Path = null };
+            stale.InternalId = 7001;
+            var audio = new Audio
+            {
+                Name = "Track",
+                Path = @"C:\music\Album\01 - Track.flac.strm",
+                InternalAlbumId = stale.InternalId
+            };
+            context.Albums.Add(stale);
+            context.Audios.Add(audio);
+
+            var result = CreateService(context).Run();
+
+            Assert.Contains("已排队刷新 1", result);
+            Assert.Empty(context.Deleted);
+            var queued = Assert.Single(context.Queued);
+            Assert.Equal(audio.InternalId, queued.Item1);
+        }
+
+        [Fact]
+        public void Run_AbortsRefreshWhenScanStartsInsideQueueLoop()
+        {
+            var context = new RepairContext();
+            var stale = new MusicAlbum { Name = "Stale", Path = null };
+            stale.InternalId = 7002;
+            var first = new Audio
+            {
+                Name = "First",
+                Path = @"C:\music\Album\01 - First.flac.strm",
+                InternalAlbumId = stale.InternalId
+            };
+            var second = new Audio
+            {
+                Name = "Second",
+                Path = @"C:\music\Album\02 - Second.flac.strm",
+                InternalAlbumId = stale.InternalId
+            };
+            context.Albums.Add(stale);
+            context.Audios.Add(first);
+            context.Audios.Add(second);
+            context.OnQueue = () => context.IsScanRunning = true;
+
+            var result = CreateService(context).Run();
+
+            Assert.Contains("已排队 1", result);
+            Assert.Single(context.Queued);
+        }
+
         private static StaleMusicAlbumRepairService CreateService(RepairContext context)
         {
             var logger = DispatchProxy.Create<ILogger, NoOpLogger>();
@@ -98,7 +150,11 @@ namespace MusicStrmExtract.Tests
                     context.Deleted.Add(album);
                     context.OnDelete?.Invoke();
                 },
-                (id, options) => context.Queued.Add((id, options)));
+                (id, options) =>
+                {
+                    context.Queued.Add((id, options));
+                    context.OnQueue?.Invoke();
+                });
         }
 
         private sealed class RepairContext
@@ -115,6 +171,8 @@ namespace MusicStrmExtract.Tests
             public bool IsScanRunning { get; set; }
 
             public Action? OnDelete { get; set; }
+
+            public Action? OnQueue { get; set; }
 
             public Action? OnGetAlbums { get; set; }
         }

@@ -129,9 +129,9 @@ namespace MusicStrmExtract.Providers
                 return rawNumber;
             }
 
-            // 优先检查各类结构布局(奇偶交错/前后排列),避免 comm 是 reg 子集时提前返回导致漏判;
-            // 例如 comm={1,3,5} reg={1..8} 是典型的"部分交错"形态,应映射到 1/2/3 而非原始轨号。
-            // 奇偶交错:01/03/05 评论 + 02/04/06 正式 → 都映射到 1/2/3
+            // 只处理可判定的完整布局:等长奇偶交错、等长前后排列。
+            // comm={1,3,5} reg={1..8} 这类部分交错缺少完整映射依据，保持原始轨号。
+            // 完整奇偶交错:01/03/05 评论 + 02/04/06 正式 → 都映射到 1/2/3
             var commIsOdd = comm.All(n => n % 2 == 1) && reg.All(n => n % 2 == 0);
             var regIsOdd = reg.All(n => n % 2 == 1) && comm.All(n => n % 2 == 0);
             if ((commIsOdd || regIsOdd) && IsInterleavedPair(comm, reg))
@@ -151,7 +151,7 @@ namespace MusicStrmExtract.Providers
                 return rawNumber;
             }
 
-            // 前后排列只在等长时有效;部分交错已在上分支处理,此处只需处理等长场景
+            // 前后排列只在等长时有效;部分交错不在可判定布局内
             if (comm.Length == reg.Length)
             {
                 // 评论轨接在正式轨之后:正式 1..N,评论 N+1..2N

@@ -140,6 +140,29 @@ namespace MusicStrmExtract.Tests
             Assert.Equal("other-rg2", result.ReleaseMbid);
         }
 
+        [Fact]
+        public async Task SearchForTrackMapAsync_ChecksAllSearchCandidatesBeyondFirstFive()
+        {
+            var api = new FakeMusicBrainzApi
+            {
+                SearchJson = "{\"releases\":[" +
+                    SearchReleaseJson("c1", "rg-1", 100) + "," +
+                    SearchReleaseJson("c2", "rg-2", 99) + "," +
+                    SearchReleaseJson("c3", "rg-3", 98) + "," +
+                    SearchReleaseJson("c4", "rg-4", 97) + "," +
+                    SearchReleaseJson("c5", "rg-5", 96) + "," +
+                    SearchReleaseJson("exact", "rg-6", 95) +
+                    "]}",
+                RgJson = "{\"releases\":[]}"
+            };
+            api.ReleaseDetails["exact"] = ReleaseDetail("exact", "1989", "US", 13, "2014-10-27");
+
+            var result = await RunAsync(api, new FakeCoverArtClient());
+
+            Assert.True(result.Found);
+            Assert.Equal("exact", result.ReleaseMbid);
+        }
+
         private static async Task<AlbumSearchResult> RunAsync(FakeMusicBrainzApi api, FakeCoverArtClient cover)
         {
             var local = new LocalDisc();

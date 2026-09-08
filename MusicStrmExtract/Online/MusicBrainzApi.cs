@@ -55,7 +55,8 @@ namespace MusicStrmExtract.Online
                 await GetJsonRootAsync(url, ct).ConfigureAwait(false));
         }
 
-        /// <summary>按 release-group MBID 获取专辑概念及该组全部 release,用于组内多版本选版。
+        /// <summary>按 release-group MBID 获取专辑概念及 lookup 返回的 release 候选。
+        /// MusicBrainz 对 linked releases 最多返回 25 条且按 GID 排序，调用方应视作候选样本而非全量。
         /// inc=releases+media+artist-credits 同时带回 release 布局、组级与 release 级艺人信息。</summary>
         public async Task<ParsedReleaseGroup> GetReleaseGroupAsync(
             string rgMbid,

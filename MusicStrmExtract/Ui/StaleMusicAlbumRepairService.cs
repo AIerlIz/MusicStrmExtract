@@ -16,7 +16,7 @@ namespace MusicStrmExtract.Ui
 {
     /// <summary>
     /// 保守修复:只清理无 MusicBrainzAlbum、无文件路径、且没有任何 Audio 通过 AlbumId 引用的 MusicAlbum,
-    /// 随后把 MusicBrainzAlbum 已存在但 AlbumId 缺失或指向陈旧专辑的 .strm 加入刷新队列。
+    /// 随后把 MusicBrainzAlbum 已存在但 AlbumId 缺失，或 AlbumId 指向陈旧专辑的 .strm 加入刷新队列。
     /// </summary>
     internal sealed class StaleMusicAlbumRepairService
     {
@@ -155,8 +155,8 @@ namespace MusicStrmExtract.Ui
 
             var toRefresh = audios
                 .Where(a => a.Path?.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) == true
-                    && HasMusicBrainzAlbum(a)
-                    && (a.AlbumId == 0 || staleReferencedAlbumIds.Contains(a.AlbumId)))
+                    && (staleReferencedAlbumIds.Contains(a.AlbumId)
+                        || (a.AlbumId == 0 && HasMusicBrainzAlbum(a))))
                 .ToList();
 
             if (toRefresh.Count > 0)
@@ -169,9 +169,18 @@ namespace MusicStrmExtract.Ui
                     ReplaceAllMetadata = false
                 };
 
+                var queued = 0;
                 foreach (var audio in toRefresh)
                 {
+                    if (_isScanRunning())
+                    {
+                        _logger.Info(
+                            $"[MusicStrmExtract] [Repair] 媒体库扫描已开始，中止刷新：已删除 {deleted} 个陈旧 MusicAlbum，已排队 {queued} 个 .strm");
+                        return $"媒体库扫描已开始，修复已中止（已删除 {deleted} 个陈旧 MusicAlbum，已排队 {queued} 个 .strm）。";
+                    }
+
                     _queueRefresh(audio.InternalId, refreshOptions);
+                    queued++;
                     ct.ThrowIfCancellationRequested();
                 }
             }

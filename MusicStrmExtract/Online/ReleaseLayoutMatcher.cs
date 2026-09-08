@@ -62,11 +62,19 @@ namespace MusicStrmExtract.Online
             return map;
         }
 
-        /// <summary>本地碟组与 release media 的轨数是否逐碟完全一致(用于优先标准版/普通版)。</summary>
+        /// <summary>本地碟组与 release media 的轨数是否逐碟完全一致，且本地消费了 release 的全部 media。</summary>
         public static bool HasExactTrackCount(
             IReadOnlyList<LocalDisc> localDiscs,
-            IReadOnlyDictionary<LocalDisc, ReleaseMedia> mapping)
+            IReadOnlyDictionary<LocalDisc, ReleaseMedia> mapping,
+            IReadOnlyList<ReleaseMedia> medias)
         {
+            if (localDiscs is null || localDiscs.Count == 0
+                || mapping is null || mapping.Count == 0
+                || medias is null || mapping.Count != medias.Count)
+            {
+                return false;
+            }
+
             foreach (var pair in mapping)
             {
                 if (pair.Key.TrackNumbers.Count != pair.Value.Tracks.Count)
@@ -75,7 +83,7 @@ namespace MusicStrmExtract.Online
                 }
             }
 
-            return localDiscs.Count > 0;
+            return true;
         }
 
         private static bool Covers(ReleaseMedia media, IReadOnlyCollection<int> trackNumbers)
