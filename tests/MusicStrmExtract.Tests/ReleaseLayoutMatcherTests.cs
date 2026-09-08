@@ -131,6 +131,23 @@ namespace MusicStrmExtract.Tests
         }
 
         [Fact]
+        public void HasExactTrackCount_TrueWhenExtraMediaIsVideoBonus()
+        {
+            var local = TestReleaseJson.LocalDisc(null, 1, 2, 3);
+            var root = TestReleaseJson.BuildReleaseWithFormats(
+                (1, "CD", TestReleaseJson.Tracks(1, 3)),
+                (2, "VCD", new[] { (1, "MV A"), (2, "MV B"), (3, "MV C") }));
+            var medias = ReleaseTracklistParser.ParseReleaseMedias(root);
+
+            var map = ReleaseLayoutMatcher.MapLocalDiscsToMedias(
+                new[] { local },
+                medias);
+
+            Assert.NotNull(map);
+            Assert.True(ReleaseLayoutMatcher.HasExactTrackCount(new[] { local }, map!, medias));
+        }
+
+        [Fact]
         public void HasExactTrackCount_MatchesPerDiscForMultiDiscAlbums()
         {
             var disc1 = new LocalDisc();

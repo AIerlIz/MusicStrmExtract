@@ -283,5 +283,62 @@ namespace MusicStrmExtract.Tests
             local.TrackNumbers.AddRange(Enumerable.Range(1, 13));
             Assert.Null(ReleaseGroupScorer.InferPreferredCountry(rg, new[] { local }));
         }
+
+        [Fact]
+        public void InferPreferredCountry_IgnoresWorldwideDigitalReleases()
+        {
+            // XW 的 24bit/2024 数字版即使带 barcode 也不参与国家推断，
+            // TW CD+VCD 应作为有效实体版进入偏好统计。
+            var digital24 = BuildMediaRelease(
+                "dig24",
+                "XW",
+                "00602458942408",
+                "2005-11-11",
+                new ReleaseMediaInfo(1, "Digital Media", 12));
+            var digital2024 = BuildMediaRelease(
+                "dig2024",
+                "XW",
+                "602458942392",
+                "2024-01-05",
+                new ReleaseMediaInfo(1, "Digital Media", 12));
+            var tw = BuildMediaRelease(
+                "tw",
+                "TW",
+                "828767594125",
+                "2005-10-31",
+                new ReleaseMediaInfo(1, "CD", 12),
+                new ReleaseMediaInfo(2, "VCD", 3));
+
+            var local = new LocalDisc();
+            local.TrackNumbers.AddRange(Enumerable.Range(1, 12));
+
+            var preferred = ReleaseGroupScorer.InferPreferredCountry(
+                new[] { digital24, digital2024, tw },
+                new[] { local });
+
+            Assert.Equal("TW", preferred);
+        }
+
+        private static ReleaseSummary BuildMediaRelease(
+            string id,
+            string country,
+            string barcode,
+            string date,
+            params ReleaseMediaInfo[] media)
+        {
+            return new ReleaseSummary(
+                id,
+                "11月的蕭邦",
+                date,
+                "Official",
+                country,
+                barcode,
+                null,
+                null,
+                "Album",
+                null,
+                Array.Empty<ArtistCredit>(),
+                media);
+        }
     }
 }

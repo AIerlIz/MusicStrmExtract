@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -62,15 +63,33 @@ namespace MusicStrmExtract.Online
             return map;
         }
 
-        /// <summary>本地碟组与 release media 的轨数是否逐碟完全一致，且本地消费了 release 的全部 media。</summary>
+        private static readonly string[] VideoMediaFormats =
+        {
+            "VCD",
+            "DVD",
+            "Blu-ray",
+            "HD DVD",
+            "HD-DVD",
+            "UMD"
+        };
+
+        /// <summary>VCD/DVD/Blu-ray 等视频 bonus media 不参与音频轨 exact 计数。</summary>
+        internal static bool IsVideoMedia(string? format)
+        {
+            return !string.IsNullOrWhiteSpace(format)
+                && VideoMediaFormats.Contains(format, StringComparer.OrdinalIgnoreCase);
+        }
+
+        /// <summary>本地碟组与 release 音频 media 的轨数是否逐碟完全一致，且本地消费了全部音频 media。</summary>
         public static bool HasExactTrackCount(
             IReadOnlyList<LocalDisc> localDiscs,
             IReadOnlyDictionary<LocalDisc, ReleaseMedia> mapping,
             IReadOnlyList<ReleaseMedia> medias)
         {
+            var requiredMediaCount = medias?.Count(m => !IsVideoMedia(m.Format)) ?? 0;
             if (localDiscs is null || localDiscs.Count == 0
                 || mapping is null || mapping.Count == 0
-                || medias is null || mapping.Count != medias.Count)
+                || mapping.Count != requiredMediaCount)
             {
                 return false;
             }

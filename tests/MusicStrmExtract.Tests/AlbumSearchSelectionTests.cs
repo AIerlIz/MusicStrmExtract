@@ -151,12 +151,99 @@ namespace MusicStrmExtract.Tests
             Assert.Equal("exact", result.ReleaseMbid);
         }
 
+        [Fact]
+        public async Task SearchForTrackMapAsync_PrefersCdWithVideoBonusOverWorldwideDigital()
+        {
+            var api = new FakeMusicBrainzApi
+            {
+                SearchJson = SearchReleases("rg-1"),
+                RgJson = ChopinRgReleases()
+            };
+            api.ReleaseDetails["tw"] = ChopinReleaseDetail(
+                "tw",
+                "2005-10-31",
+                (1, "CD", 12),
+                (2, "VCD", 3));
+            api.ReleaseDetails["dig24"] = ChopinReleaseDetail(
+                "dig24",
+                "2005-11-11",
+                (1, "Digital Media", 12));
+            api.ReleaseDetails["dig2024"] = ChopinReleaseDetail(
+                "dig2024",
+                "2024-01-05",
+                (1, "Digital Media", 12));
+
+            var local = new LocalDisc();
+            local.TrackNumbers.AddRange(Enumerable.Range(1, 12));
+            var result = await new AlbumSearch(api).SearchForTrackMapAsync(
+                "11月的萧邦 (2005)",
+                "周杰伦",
+                new[] { local },
+                CancellationToken.None);
+
+            Assert.True(result.Found);
+            Assert.Equal("tw", result.ReleaseMbid);
+        }
+
         private static async Task<AlbumSearchResult> RunAsync(FakeMusicBrainzApi api)
         {
             var local = new LocalDisc();
             local.TrackNumbers.AddRange(Enumerable.Range(1, 13));
             return await new AlbumSearch(api).SearchForTrackMapAsync(
                 "1989 (2014)", "Artist", new[] { local }, CancellationToken.None).ConfigureAwait(false);
+        }
+
+        private static string ChopinRgReleases()
+        {
+            return "{\"id\":\"rg-1\",\"title\":\"11月的蕭邦\",\"primary-type\":\"Album\"," +
+                "\"artist-credit\":[{\"artist\":{\"id\":\"art-1\",\"name\":\"周杰伦\"}}],\"releases\":[" +
+                "{\"id\":\"tw\",\"title\":\"11月的蕭邦\",\"date\":\"2005-10-31\",\"status\":\"Official\",\"country\":\"TW\",\"barcode\":\"828767594125\",\"disambiguation\":null,\"packaging\":null,\"media\":[{\"format\":\"CD\",\"track-count\":12},{\"format\":\"VCD\",\"track-count\":3}]}," +
+                "{\"id\":\"dig24\",\"title\":\"11月的蕭邦\",\"date\":\"2005-11-11\",\"status\":\"Official\",\"country\":\"XW\",\"barcode\":\"00602458942408\",\"disambiguation\":\"24 bit\",\"packaging\":\"None\",\"media\":[{\"format\":\"Digital Media\",\"track-count\":12}]}," +
+                "{\"id\":\"dig2024\",\"title\":\"11月的蕭邦\",\"date\":\"2024-01-05\",\"status\":\"Official\",\"country\":\"XW\",\"barcode\":\"602458942392\",\"disambiguation\":null,\"packaging\":\"None\",\"media\":[{\"format\":\"Digital Media\",\"track-count\":12}]}" +
+                "]}";
+        }
+
+        private static string ChopinReleaseDetail(
+            string id,
+            string date,
+            params (int Position, string Format, int TrackCount)[] medias)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append("{\"id\":\"").Append(id)
+              .Append("\",\"title\":\"11月的蕭邦\",\"date\":\"").Append(date)
+              .Append("\",\"country\":\"TW\",\"status\":\"Official\",\"media\":[");
+            for (var m = 0; m < medias.Length; m++)
+            {
+                if (m > 0)
+                {
+                    sb.Append(',');
+                }
+
+                var media = medias[m];
+                sb.Append("{\"position\":").Append(media.Position)
+                  .Append(",\"format\":\"").Append(media.Format)
+                  .Append("\",\"track-count\":").Append(media.TrackCount)
+                  .Append(",\"tracks\":[");
+                for (var n = 1; n <= media.TrackCount; n++)
+                {
+                    if (n > 1)
+                    {
+                        sb.Append(',');
+                    }
+
+                    sb.Append("{\"number\":\"").Append(n)
+                      .Append("\",\"title\":\"歌").Append(media.Position).Append('-').Append(n)
+                      .Append("\",\"recording\":{\"id\":\"rec-").Append(id).Append('-')
+                      .Append(media.Position).Append('-').Append(n)
+                      .Append("\",\"title\":\"歌").Append(media.Position).Append('-').Append(n)
+                      .Append("\",\"artist-credit\":[{\"artist\":{\"id\":\"art-1\",\"name\":\"周杰伦\"}}]}}");
+                }
+
+                sb.Append("]}");
+            }
+
+            sb.Append("]}");
+            return sb.ToString();
         }
 
         private static string SearchReleaseJson(string id, string rgId, int score)

@@ -74,7 +74,10 @@ namespace MusicStrmExtract.Online
                 tracks.Sort((a, b) => a.Number.CompareTo(b.Number));
                 if (tracks.Count > 0)
                 {
-                    medias.Add(new ReleaseMedia(GetInt(m, "position"), tracks.ToArray()));
+                    medias.Add(new ReleaseMedia(
+                        GetInt(m, "position"),
+                        GetString(m, "format"),
+                        tracks.ToArray()));
                 }
             }
 

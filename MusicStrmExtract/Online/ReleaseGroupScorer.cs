@@ -112,7 +112,7 @@ namespace MusicStrmExtract.Online
         }
 
         /// <summary>
-        /// 自动推断一个无感的国家偏好:在"官方 + 有 barcode + 碟布局与本地一致"的候选里,
+        /// 自动推断一个无感的国家偏好:在"官方实体版 + 有 barcode + 有效地区 + 音频碟布局与本地一致"的候选里,
         /// 取出现次数最多的国家(mode);次数打平时,取"该国基础分最高"的国家;再打平按国名稳定。
         /// 没有任何可匹配候选时返回 null(不启用加权,保持原行为)。
         /// </summary>
@@ -127,10 +127,12 @@ namespace MusicStrmExtract.Online
 
             var barcodeCounts = CountBarcodes(releases);
 
-            // 只统计"官方实体版"且碟布局与本地一致的候选,避免被 Withdrawn/数字版带偏
+            // 只统计官方实体版与有效地区候选:Worldwide/数字发行不应把国家偏好带到实体原版之前
             var compatible = releases
                 .Where(r => ReleaseStatusPolicy.IsOfficial(r.Status)
                             && !string.IsNullOrWhiteSpace(r.Barcode)
+                            && IsMarketCountry(r.Country)
+                            && HasPhysicalMedia(r)
                             && LayoutMatchesLocal(r, localDiscs))
                 .ToList();
             if (compatible.Count == 0)
@@ -182,13 +184,16 @@ namespace MusicStrmExtract.Online
         /// <summary>release 的 media 布局是否与本地碟组完全一致(逐碟 track-count 相等)。</summary>
         private static bool LayoutMatchesLocal(ReleaseSummary release, IReadOnlyList<LocalDisc> localDiscs)
         {
-            if (release.Media.Count != localDiscs.Count)
+            var audioMedia = release.Media
+                .Where(m => !ReleaseLayoutMatcher.IsVideoMedia(m.Format))
+                .ToList();
+            if (audioMedia.Count != localDiscs.Count)
             {
                 return false;
             }
 
             // 按 media.position 与本地碟(DiscNumber/轨数)排序后逐碟比对
-            var sortedMedia = release.Media.OrderBy(m => m.Position).ToList();
+            var sortedMedia = audioMedia.OrderBy(m => m.Position).ToList();
             var sortedLocal = localDiscs.OrderBy(d => d.DiscNumber ?? int.MaxValue).ToList();
             for (var i = 0; i < sortedLocal.Count; i++)
             {
@@ -200,6 +205,19 @@ namespace MusicStrmExtract.Online
             }
 
             return true;
+        }
+
+        private static bool HasPhysicalMedia(ReleaseSummary release)
+        {
+            return release.Media.Any(m =>
+                !string.Equals(m.Format, "Digital Media", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static bool IsMarketCountry(string? country)
+        {
+            return !string.IsNullOrWhiteSpace(country)
+                && country.Length == 2
+                && country[0] != 'X';
         }
 
         private static Dictionary<string, int> CountBarcodes(IEnumerable<ReleaseSummary> releases)

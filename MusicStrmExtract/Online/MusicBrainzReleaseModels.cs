@@ -62,6 +62,7 @@ namespace MusicStrmExtract.Online
     /// <summary>release 响应(inc=recordings)中解析出的一张 media(碟)。</summary>
     public sealed record ReleaseMedia(
         int Position,
+        string? Format,
         IReadOnlyList<AlbumTrack> Tracks);
 
     /// <summary>轨道映射搜索的结果(本地指纹校验通过后创建,创建后不可变)。</summary>
