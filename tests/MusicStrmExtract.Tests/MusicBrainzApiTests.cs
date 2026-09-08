@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -106,6 +107,38 @@ namespace MusicStrmExtract.Tests
             Assert.Equal(1, gate.AcquireCount);
         }
 
+        [Fact]
+        public async Task GetReleaseGroupAsync_PaginatesPastTwentyFiveLinkedReleases()
+        {
+            var firstPage = string.Join(",", Enumerable.Range(0, 25)
+                .Select(n => ReleaseJson($"r{n}")));
+            var secondPage = string.Join(",", Enumerable.Range(25, 5)
+                .Select(n => ReleaseJson($"r{n}")));
+            var transport = new FakeTransport
+            {
+                UrlBody = url => url.Contains("/release-group/", StringComparison.Ordinal)
+                    ? $"{{\"id\":\"rg-1\",\"title\":\"Album\",\"primary-type\":\"Album\",\"artist-credit\":[],\"releases\":[{firstPage}]}}"
+                    : $"{{\"count\":30,\"offset\":25,\"releases\":[{secondPage}]}}"
+            };
+            var gate = new CountingGate();
+            using var api = new MusicBrainzApi("https://mb.example", transport, gate);
+
+            var group = await api.GetReleaseGroupAsync("rg-1", CancellationToken.None);
+
+            Assert.Equal(30, group.Releases.Count);
+            Assert.Equal("r0", group.Releases[0].Id);
+            Assert.Equal("r29", group.Releases[^1].Id);
+            Assert.Equal(2, transport.Calls);
+            Assert.Equal(2, gate.AcquireCount);
+            Assert.Contains("release?release-group=rg-1", transport.LastUrl);
+        }
+
+        private static string ReleaseJson(string id)
+        {
+            return $"{{\"id\":\"{id}\",\"title\":\"Album\",\"date\":\"2020-01-01\"," +
+                   $"\"status\":\"Official\",\"country\":\"US\",\"artist-credit\":[],\"media\":[]}}";
+        }
+
         private sealed class FakeTransport : IHttpTransport
         {
             public int StatusCode { get; set; } = 200;
@@ -116,11 +149,13 @@ namespace MusicStrmExtract.Tests
 
             public string? LastUrl { get; private set; }
 
+            public Func<string, string>? UrlBody { get; set; }
+
             public Task<HttpResponse> GetAsync(string url, CancellationToken ct)
             {
                 Calls++;
                 LastUrl = url;
-                return Task.FromResult(new HttpResponse(StatusCode, Body));
+                return Task.FromResult(new HttpResponse(StatusCode, UrlBody?.Invoke(url) ?? Body));
             }
 
             public void Dispose()

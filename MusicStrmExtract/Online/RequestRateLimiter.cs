@@ -19,13 +19,10 @@ namespace MusicStrmExtract.Online
 
         public RequestRateLimiter(TimeSpan minimumInterval, Func<DateTime> clock)
         {
-            if (minimumInterval < TimeSpan.Zero)
-            {
-                throw new ArgumentOutOfRangeException(nameof(minimumInterval));
-            }
-
+            ArgumentOutOfRangeException.ThrowIfLessThan(minimumInterval, TimeSpan.Zero);
             _minimumInterval = minimumInterval;
-            _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+            ArgumentNullException.ThrowIfNull(clock);
+            _clock = clock;
         }
 
         public async Task<IDisposable> AcquireAsync(CancellationToken ct)

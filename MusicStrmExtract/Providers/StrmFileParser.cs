@@ -177,11 +177,11 @@ namespace MusicStrmExtract.Providers
         }
 
         private static bool IsInterleavedPair(
-            IReadOnlyCollection<int> oddNumbers,
-            IReadOnlyCollection<int> evenNumbers)
+            int[] oddNumbers,
+            int[] evenNumbers)
         {
-            var count = oddNumbers.Count;
-            if (count == 0 || oddNumbers.Count != evenNumbers.Count)
+            var count = oddNumbers.Length;
+            if (count == 0 || oddNumbers.Length != evenNumbers.Length)
             {
                 return false;
             }
@@ -193,14 +193,14 @@ namespace MusicStrmExtract.Providers
             return canonical.Distinct().Count() == count && canonical.Max() == count;
         }
 
-        private static bool IsSequentialFrom(IReadOnlyList<int> numbers, int start)
+        private static bool IsSequentialFrom(int[] numbers, int start)
         {
-            if (numbers.Count == 0)
+            if (numbers.Length == 0)
             {
                 return false;
             }
 
-            for (var i = 0; i < numbers.Count; i++)
+            for (var i = 0; i < numbers.Length; i++)
             {
                 if (numbers[i] != start + i)
                 {

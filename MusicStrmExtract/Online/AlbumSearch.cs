@@ -107,7 +107,7 @@ namespace MusicStrmExtract.Online
             var ordered = OrderSearchCandidates(scored, preferredCountry);
             var state = new SearchState();
 
-            // 尝试用 release-group lookup 返回的 release 候选分层评分选出最优实体版本;没有 exact 时保留已看到的布局候选,
+            // 尝试用 release-group 下 browse 补齐后的 release 候选分层评分选出最优实体版本;没有 exact 时保留已看到的布局候选,
             // 继续走搜索回退路径,避免当前 RG 无精确版本时错过其它 RG 的精确命中。
             var rgResult = await TryResolveFromReleaseGroupAsync(
                 ordered[0],
@@ -144,8 +144,7 @@ namespace MusicStrmExtract.Online
         }
 
         /// <summary>
-        /// RG 加权路径:从 top-1 候选取 release-group-id,对 lookup 返回的 release 候选评分;
-        /// MusicBrainz lookup 的 linked releases 有 25 条上限,缺失候选依赖下方搜索回退补充。
+        /// RG 加权路径:从 top-1 候选取 release-group-id,对 browse 补齐后的 release 候选评分;
         /// 只收集顶级分数档的精确命中并交给 CAA 决胜。失败或没有 exact 时返回 null 走搜索回退。
         /// </summary>
         private async Task<AlbumSearchResult?> TryResolveFromReleaseGroupAsync(

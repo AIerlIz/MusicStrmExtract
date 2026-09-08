@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -11,6 +12,8 @@ namespace MusicStrmExtract.Online
     public sealed class MusicBrainzApi : IMusicBrainzApi
     {
         private const string DefaultBaseUrl = "https://musicbrainz.org";
+        private const int LinkedReleaseLookupLimit = 25;
+        private const int BrowsePageSize = 100;
 
         private readonly string _baseUrl;
         private readonly IHttpTransport _transport;
@@ -55,16 +58,68 @@ namespace MusicStrmExtract.Online
                 await GetJsonRootAsync(url, ct).ConfigureAwait(false));
         }
 
-        /// <summary>按 release-group MBID 获取专辑概念及 lookup 返回的 release 候选。
-        /// MusicBrainz 对 linked releases 最多返回 25 条且按 GID 排序，调用方应视作候选样本而非全量。
+        /// <summary>按 release-group MBID 获取专辑概念及该组 release。
+        /// lookup 对 linked releases 最多返回 25 条且按 GID 排序，超过 25 条时用 browse 继续分页补齐。
         /// inc=releases+media+artist-credits 同时带回 release 布局、组级与 release 级艺人信息。</summary>
         public async Task<ParsedReleaseGroup> GetReleaseGroupAsync(
             string rgMbid,
             CancellationToken ct)
         {
             var url = $"{_baseUrl}/ws/2/release-group/{Uri.EscapeDataString(rgMbid)}?inc=releases+media+artist-credits&fmt=json";
-            return ReleaseJsonReader.ParseReleaseGroup(
+            var group = ReleaseJsonReader.ParseReleaseGroup(
                 await GetJsonRootAsync(url, ct).ConfigureAwait(false));
+            if (group.Releases.Count < LinkedReleaseLookupLimit)
+            {
+                return group;
+            }
+
+            return await LoadRemainingReleaseGroupReleasesAsync(group, rgMbid, ct).ConfigureAwait(false);
+        }
+
+        private async Task<ParsedReleaseGroup> LoadRemainingReleaseGroupReleasesAsync(
+            ParsedReleaseGroup group,
+            string rgMbid,
+            CancellationToken ct)
+        {
+            var releases = group.Releases.ToList();
+            var seen = new HashSet<string>(
+                releases
+                    .Select(r => r.Id)
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Select(id => id!),
+                StringComparer.OrdinalIgnoreCase);
+            var offset = LinkedReleaseLookupLimit;
+
+            while (true)
+            {
+                var browseUrl = $"{_baseUrl}/ws/2/release?release-group={Uri.EscapeDataString(rgMbid)}" +
+                    $"&inc=media+artist-credits&fmt=json&limit={BrowsePageSize}&offset={offset}";
+                var (totalCount, page) = ReleaseJsonReader.ParseBrowseReleases(
+                    await GetJsonRootAsync(browseUrl, ct).ConfigureAwait(false));
+
+                foreach (var release in page)
+                {
+                    if (!string.IsNullOrWhiteSpace(release.Id) && seen.Add(release.Id))
+                    {
+                        releases.Add(release);
+                    }
+                }
+
+                if (page.Count == 0 || releases.Count >= totalCount)
+                {
+                    break;
+                }
+
+                offset += page.Count;
+            }
+
+            return new ParsedReleaseGroup(
+                group.Id,
+                group.Title,
+                group.PrimaryType,
+                group.Disambiguation,
+                group.ArtistCredits,
+                releases.ToArray());
         }
 
         private async Task<JsonElement> GetJsonRootAsync(string url, CancellationToken ct)
@@ -92,7 +147,7 @@ namespace MusicStrmExtract.Online
             return doc.RootElement.Clone();
         }
 
-        private static IHttpTransport CreateDefaultTransport(int timeoutSeconds)
+        private static HttpClientTransport CreateDefaultTransport(int timeoutSeconds)
         {
             var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
             http.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
@@ -107,7 +162,7 @@ namespace MusicStrmExtract.Online
                 return value ?? string.Empty;
             }
 
-            return value.Substring(0, max) + "...";
+            return string.Concat(value.AsSpan(0, max), "...");
         }
 
         public void Dispose()

@@ -21,13 +21,30 @@ namespace MusicStrmExtract.Providers
     {
         private readonly ILogger _logger;
         private readonly TtlCache<AlbumSearchResult> _cache;
+        private readonly Func<string?, IMusicBrainzApi> _apiFactory;
+        private readonly Func<string?, ICoverArtClient> _coverArtFactory;
         private readonly ConcurrentDictionary<string, Task<AlbumSearchResult>> _inflight =
             new ConcurrentDictionary<string, Task<AlbumSearchResult>>(StringComparer.Ordinal);
 
         public AlbumTrackMapLocator(ILogger logger, TtlCache<AlbumSearchResult> cache)
+            : this(
+                logger,
+                cache,
+                baseUrl => new MusicBrainzApi(baseUrl),
+                coverArtBaseUrl => new CoverArtClient(coverArtBaseUrl))
+        {
+        }
+
+        internal AlbumTrackMapLocator(
+            ILogger logger,
+            TtlCache<AlbumSearchResult> cache,
+            Func<string?, IMusicBrainzApi> apiFactory,
+            Func<string?, ICoverArtClient> coverArtFactory)
         {
             _logger = logger;
             _cache = cache;
+            _apiFactory = apiFactory;
+            _coverArtFactory = coverArtFactory;
         }
 
         public async Task<AlbumSearchResult> GetOrSearchAsync(
@@ -49,15 +66,24 @@ namespace MusicStrmExtract.Providers
                 artistFolder,
                 localDiscs,
                 config,
-                ct));
+                CancellationToken.None));
+            _ = task.ContinueWith(
+                _ => _inflight.TryRemove(
+                    new KeyValuePair<string, Task<AlbumSearchResult>>(cacheKey, task)),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
             try
             {
-                return await task.ConfigureAwait(false);
+                return await task.WaitAsync(ct).ConfigureAwait(false);
             }
             finally
             {
-                _inflight.TryRemove(
-                    new KeyValuePair<string, Task<AlbumSearchResult>>(cacheKey, task));
+                if (task.IsCompleted)
+                {
+                    _inflight.TryRemove(
+                        new KeyValuePair<string, Task<AlbumSearchResult>>(cacheKey, task));
+                }
             }
         }
 
@@ -69,9 +95,9 @@ namespace MusicStrmExtract.Providers
             PluginConfiguration config,
             CancellationToken ct)
         {
-            using var api = new MusicBrainzApi(
+            using var api = _apiFactory(
                 string.IsNullOrWhiteSpace(config.MusicBrainzBaseUrl) ? null : config.MusicBrainzBaseUrl);
-            var coverArt = new CoverArtClient(config.CoverArtBaseUrl);
+            var coverArt = _coverArtFactory(config.CoverArtBaseUrl);
             var search = new AlbumSearch(api, coverArt);
             var result = await search.SearchForTrackMapAsync(albumFolder, artistFolder, localDiscs, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();

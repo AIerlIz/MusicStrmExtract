@@ -24,19 +24,12 @@ namespace MusicStrmExtract.Caching
 
         internal TtlCache(TimeSpan ttl, int maxEntries, Func<DateTime> clock, IEqualityComparer<string>? keyComparer = null)
         {
-            if (ttl <= TimeSpan.Zero)
-            {
-                throw new ArgumentOutOfRangeException(nameof(ttl));
-            }
-
-            if (maxEntries <= 0)
-            {
-                throw new ArgumentOutOfRangeException(nameof(maxEntries));
-            }
-
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(ttl, TimeSpan.Zero);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxEntries);
             _ttl = ttl;
             _maxEntries = maxEntries;
-            _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+            ArgumentNullException.ThrowIfNull(clock);
+            _clock = clock;
             _map = new Dictionary<string, Node>(keyComparer ?? StringComparer.Ordinal);
         }
 
@@ -53,10 +46,7 @@ namespace MusicStrmExtract.Caching
 
         public bool TryGet(string key, out TValue value)
         {
-            if (key is null)
-            {
-                throw new ArgumentNullException(nameof(key));
-            }
+            ArgumentNullException.ThrowIfNull(key);
 
             lock (_gate)
             {
@@ -83,10 +73,7 @@ namespace MusicStrmExtract.Caching
 
         public void Set(string key, TValue value)
         {
-            if (key is null)
-            {
-                throw new ArgumentNullException(nameof(key));
-            }
+            ArgumentNullException.ThrowIfNull(key);
 
             lock (_gate)
             {

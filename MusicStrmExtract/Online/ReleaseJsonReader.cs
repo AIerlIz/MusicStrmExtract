@@ -31,6 +31,25 @@ namespace MusicStrmExtract.Online
             return result;
         }
 
+        public static (int TotalCount, List<ReleaseSummary> Releases) ParseBrowseReleases(JsonElement root)
+        {
+            var result = new List<ReleaseSummary>();
+            if (root.ValueKind == JsonValueKind.Object
+                && root.TryGetProperty("releases", out var releases)
+                && releases.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var release in releases.EnumerateArray())
+                {
+                    if (release.ValueKind == JsonValueKind.Object)
+                    {
+                        result.Add(ParseRelease(release));
+                    }
+                }
+            }
+
+            return (GetInt(root, "count"), result);
+        }
+
         public static ParsedReleaseGroup ParseReleaseGroup(JsonElement root)
         {
             var result = new List<ReleaseSummary>();

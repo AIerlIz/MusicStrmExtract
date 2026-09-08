@@ -78,5 +78,23 @@ namespace MusicStrmExtract.Tests
             Assert.Equal("Various Artists", parsed.ArtistCredits.Single().Name);
             Assert.Null(parsed.ArtistCredits.Single().Id);
         }
+
+        [Fact]
+        public void ParseBrowseReleases_ReadsTotalCountAndReleases()
+        {
+            var root = JsonDocument.Parse(
+                "{\"count\":30,\"offset\":25,\"releases\":[{" +
+                "\"id\":\"release-26\",\"title\":\"Album\",\"date\":\"2020-01-01\"," +
+                "\"status\":\"Official\",\"country\":\"US\",\"artist-credit\":[]," +
+                "\"media\":[{\"format\":\"CD\",\"track-count\":10}]}]}").RootElement;
+
+            var parsed = ReleaseJsonReader.ParseBrowseReleases(root);
+
+            Assert.Equal(30, parsed.TotalCount);
+            var release = Assert.Single(parsed.Releases);
+            Assert.Equal("release-26", release.Id);
+            Assert.Equal("Album", release.Title);
+            Assert.Equal(10, Assert.Single(release.Media).TrackCount);
+        }
     }
 }
