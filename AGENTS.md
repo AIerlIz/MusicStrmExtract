@@ -39,7 +39,7 @@
 - `AlbumSearch.SearchForTrackMapAsync` 把专辑文件夹先定位为 release-group（专辑概念），再从该组 release（可购买发行版本）中选实体版本；`MusicBrainzApi.GetReleaseGroupAsync` 返回 `ParsedReleaseGroup`，组级 ID/艺人信息要传给最终结果，不能只依赖 release 详情里碰巧带出的嵌套字段。
 - `AlbumSearch.SearchForTrackMapAsync` 会先检查 top-1 候选所在的 release-group；若当前 RG 没有轨数完全一致的 exact 命中，会继续检查搜索候选里其它 RG 的精确命中。
 - 找到首个 exact 后直接返回，不继续拉取同档候选做外网决胜。
-- 残余同分在 `ReleaseGroupScorer.ScoreAll` 内按日期 → 质量分 → release id 稳定排序，不再依赖封面图。
+- RG 分层顺序为状态 → 年份贴近 → 国家偏好 → 日期；残余同分在 `ReleaseGroupScorer.ScoreAll` 内按日期 → 质量分 → release id 稳定排序，不再依赖封面图。
 - 国家偏好只加给“官方状态且与偏好国家一致”的候选，不能把 Bootleg/Pseudo/Withdrawn 的低状态版本抬到官方版本之上。
 - 搜索候选状态排序与 RG 评分统一在 `ReleaseStatusPolicy.SearchPriority` / `ScoreWeight` 维护，不要另写一套字符串分类；修改优先级时同步 `ReleaseStatusPolicyTests`、`AlbumSearchSelectionTests` 和 `ReleaseGroupScorerTests`。
 - 修改这些排序、提前返回或断点逻辑时，同步维护 `AlbumSearchSelectionTests` 和 `ReleaseGroupScorerTests`。
@@ -50,6 +50,6 @@
 - 涉及新增 MusicBrainz 请求入口时统一走 `GetJsonRootAsync`，不要绕过缓存与限流直接发 `HttpClient`；测试中注入 `IHttpTransport` / `IRequestGate`。
 
 ### 发版与验证
-- 项目版本号需要手动同步：发新 tag 前更新 `MusicStrmExtract.csproj` 的 `Version`、`AssemblyVersion`、`FileVersion`。当前已同步为 `1.7.6.0`。
+- 项目版本号需要手动同步：发新 tag 前更新 `MusicStrmExtract.csproj` 的 `Version`、`AssemblyVersion`、`FileVersion`。当前已同步为 `1.7.7.0`。
 - 常规验证命令：`dotnet test tests\MusicStrmExtract.Tests\MusicStrmExtract.Tests.csproj -c Release --no-restore --nologo`。
 - 涉及选版、直写或刷新流程的改动，发布前建议连接 Emby Server 跑一次媒体库刷新。

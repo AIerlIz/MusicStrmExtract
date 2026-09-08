@@ -161,15 +161,23 @@ namespace MusicStrmExtract.Tests
             };
             api.ReleaseDetails["tw"] = ChopinReleaseDetail(
                 "tw",
+                "TW",
                 "2005-10-31",
                 (1, "CD", 12),
                 (2, "VCD", 3));
+            api.ReleaseDetails["jp"] = ChopinReleaseDetail(
+                "jp",
+                "JP",
+                "2006-01-18",
+                (1, "CD", 12));
             api.ReleaseDetails["dig24"] = ChopinReleaseDetail(
                 "dig24",
+                "XW",
                 "2005-11-11",
                 (1, "Digital Media", 12));
             api.ReleaseDetails["dig2024"] = ChopinReleaseDetail(
                 "dig2024",
+                "XW",
                 "2024-01-05",
                 (1, "Digital Media", 12));
 
@@ -199,19 +207,22 @@ namespace MusicStrmExtract.Tests
                 "\"artist-credit\":[{\"artist\":{\"id\":\"art-1\",\"name\":\"周杰伦\"}}],\"releases\":[" +
                 "{\"id\":\"tw\",\"title\":\"11月的蕭邦\",\"date\":\"2005-10-31\",\"status\":\"Official\",\"country\":\"TW\",\"barcode\":\"828767594125\",\"disambiguation\":null,\"packaging\":null,\"media\":[{\"format\":\"CD\",\"track-count\":12},{\"format\":\"VCD\",\"track-count\":3}]}," +
                 "{\"id\":\"dig24\",\"title\":\"11月的蕭邦\",\"date\":\"2005-11-11\",\"status\":\"Official\",\"country\":\"XW\",\"barcode\":\"00602458942408\",\"disambiguation\":\"24 bit\",\"packaging\":\"None\",\"media\":[{\"format\":\"Digital Media\",\"track-count\":12}]}," +
-                "{\"id\":\"dig2024\",\"title\":\"11月的蕭邦\",\"date\":\"2024-01-05\",\"status\":\"Official\",\"country\":\"XW\",\"barcode\":\"602458942392\",\"disambiguation\":null,\"packaging\":\"None\",\"media\":[{\"format\":\"Digital Media\",\"track-count\":12}]}" +
+                "{\"id\":\"dig2024\",\"title\":\"11月的蕭邦\",\"date\":\"2024-01-05\",\"status\":\"Official\",\"country\":\"XW\",\"barcode\":\"602458942392\",\"disambiguation\":null,\"packaging\":\"None\",\"media\":[{\"format\":\"Digital Media\",\"track-count\":12}]}," +
+                "{\"id\":\"jp\",\"title\":\"11月的蕭邦\",\"date\":\"2006-01-18\",\"status\":\"Official\",\"country\":\"JP\",\"barcode\":\"4547366023589\",\"disambiguation\":null,\"packaging\":null,\"media\":[{\"format\":\"CD\",\"track-count\":12}]}" +
                 "]}";
         }
 
         private static string ChopinReleaseDetail(
             string id,
+            string country,
             string date,
             params (int Position, string Format, int TrackCount)[] medias)
         {
             var sb = new System.Text.StringBuilder();
             sb.Append("{\"id\":\"").Append(id)
               .Append("\",\"title\":\"11月的蕭邦\",\"date\":\"").Append(date)
-              .Append("\",\"country\":\"TW\",\"status\":\"Official\",\"media\":[");
+              .Append("\",\"country\":\"").Append(country)
+              .Append("\",\"status\":\"Official\",\"media\":[");
             for (var m = 0; m < medias.Length; m++)
             {
                 if (m > 0)

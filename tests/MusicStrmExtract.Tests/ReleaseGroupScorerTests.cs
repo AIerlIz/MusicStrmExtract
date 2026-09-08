@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -12,12 +12,12 @@ namespace MusicStrmExtract.Tests
     {
         /// <summary>构造一个含有多个版本的 release-group 候选列表。</summary>
         private static IReadOnlyList<ReleaseSummary> BuildRgJson(params (string Id, string Status, string? Barcode, string? Country,
-            string? Date, bool HasCDDisc, string? Disambiguation)[] releases)
+            string? Date, bool HasCDDisc)[] releases)
         {
             var result = new List<ReleaseSummary>();
             foreach (var release in releases)
             {
-                var (id, status, barcode, country, date, hasCDDisc, disambig) = release;
+                var (id, status, barcode, country, date, hasCDDisc) = release;
                 var media = hasCDDisc
                     ? (IReadOnlyList<ReleaseMediaInfo>)new[] { new ReleaseMediaInfo(1, "CD", 13) }
                     : Array.Empty<ReleaseMediaInfo>();
@@ -29,7 +29,7 @@ namespace MusicStrmExtract.Tests
                     country,
                     barcode,
                     null,
-                    disambig,
+                    null,
                     null,
                     null,
                     Array.Empty<ArtistCredit>(),
@@ -43,9 +43,9 @@ namespace MusicStrmExtract.Tests
         public void ScoreAll_Official_WithBarcode_Wins()
         {
             var rg = BuildRgJson(
-                ("a", "Official", "123", "US", "2014-10-27", true, null),
-                ("b", "Bootleg",  "123", "US", "2014-10-27", false, null),
-                ("c", "Official", null,  "US", "2014-10-27", false, null)
+                ("a", "Official", "123", "US", "2014-10-27", true),
+                ("b", "Bootleg",  "123", "US", "2014-10-27", false),
+                ("c", "Official", null,  "US", "2014-10-27", false)
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg);
             Assert.Equal(3, scored.Count);
@@ -58,8 +58,8 @@ namespace MusicStrmExtract.Tests
         public void ScoreAll_Bootleg_ScoredLowest()
         {
             var rg = BuildRgJson(
-                ("boot", "Bootleg", "123", "US", "2014-10-27", false, null),
-                ("off",  "Official", null, "US", "2014-10-27", false, null)
+                ("boot", "Bootleg", "123", "US", "2014-10-27", false),
+                ("off",  "Official", null, "US", "2014-10-27", false)
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg);
             Assert.Equal("off", scored[0].Release.Id);
@@ -71,10 +71,10 @@ namespace MusicStrmExtract.Tests
         {
             // barcode "ABC" 出现 3 次 → +min(3*5, 50) = +15
             var rg = BuildRgJson(
-                ("a", "Official", "ABC", "US", "2014-10-27", true, null),
-                ("b", "Official", "ABC", "GB", "2014-10-27", true, null),
-                ("c", "Official", "ABC", "JP", "2014-10-27", true, null),
-                ("d", "Official", "XYZ", "US", "2014-10-27", true, null)
+                ("a", "Official", "ABC", "US", "2014-10-27", true),
+                ("b", "Official", "ABC", "GB", "2014-10-27", true),
+                ("c", "Official", "ABC", "JP", "2014-10-27", true),
+                ("d", "Official", "XYZ", "US", "2014-10-27", true)
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg);
             // a/b/c 应同分（同 barcode 频次相同），d 应最低（barcode 频次低）
@@ -87,8 +87,8 @@ namespace MusicStrmExtract.Tests
         public void ScoreAll_PseudoRelease_NegativeScore()
         {
             var rg = BuildRgJson(
-                ("pseudo", "Pseudo-Release", null, null, null, false, null),
-                ("official", "Official", "123", "US", "2014-01-01", true, null)
+                ("pseudo", "Pseudo-Release", null, null, null, false),
+                ("official", "Official", "123", "US", "2014-01-01", true)
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg);
             Assert.Equal("official", scored[0].Release.Id);
@@ -99,8 +99,8 @@ namespace MusicStrmExtract.Tests
         public void ScoreAll_CompleteDate_GetsBonus()
         {
             var rg = BuildRgJson(
-                ("a", "Official", "123", "US", "2014-10-27", true, null),
-                ("b", "Official", "123", "US", "2014", false, null)
+                ("a", "Official", "123", "US", "2014-10-27", true),
+                ("b", "Official", "123", "US", "2014", false)
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg);
             Assert.Equal("a", scored[0].Release.Id);
@@ -112,24 +112,11 @@ namespace MusicStrmExtract.Tests
         {
             // 同样 Official+barcode+日期,CD 版应高于无 media 信息版
             var rg = BuildRgJson(
-                ("cd",  "Official", "123", "US", "2014-10-27", true, null),
-                ("nod", "Official", "123", "US", "2014-10-27", false, null)
+                ("cd",  "Official", "123", "US", "2014-10-27", true),
+                ("nod", "Official", "123", "US", "2014-10-27", false)
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg);
             Assert.Equal("cd", scored[0].Release.Id);
-            Assert.True(scored[0].Score > scored[1].Score);
-        }
-
-        [Fact]
-        public void ScoreAll_DisambiguationPenalty()
-        {
-            // 带歧义描述(如打折版)应低于无歧义版本
-            var rg = BuildRgJson(
-                ("plain", "Official", "123", "US", "2014-10-27", true, null),
-                ("disc",  "Official", "123", "US", "2014-10-27", true, "MOINS CHER")
-            );
-            var scored = ReleaseGroupScorer.ScoreAll(rg);
-            Assert.Equal("plain", scored[0].Release.Id);
             Assert.True(scored[0].Score > scored[1].Score);
         }
 
@@ -138,9 +125,9 @@ namespace MusicStrmExtract.Tests
         {
             // 同分时本地年份 2004 应优先命中 2004 原版而非 2008 重版
             var rg = BuildRgJson(
-                ("tw2008", "Official", "4547366035711", "TW", "2008-01-23", true, null),
-                ("tw2004", "Official", "4716331042928", "TW", "2004-08-03", true, null),
-                ("tw2020", "Official", "0194397682816", "TW", "2020-11-06", false, null)
+                ("tw2008", "Official", "4547366035711", "TW", "2008-01-23", true),
+                ("tw2004", "Official", "4716331042928", "TW", "2004-08-03", true),
+                ("tw2020", "Official", "0194397682816", "TW", "2020-11-06", false)
             );
             // 无 localYear → 按分数降序（三者同分，排序不确定）
             var scoredNoYear = ReleaseGroupScorer.ScoreAll(rg);
@@ -154,8 +141,8 @@ namespace MusicStrmExtract.Tests
         {
             // 年份差值相同时（如本地 2005，候选 2004 vs 2006），日期更早者优先（首发原版）
             var rg = BuildRgJson(
-                ("late", "Official", "ABC", "US", "2006-03-15", true, null),
-                ("early", "Official", "ABC", "US", "2004-08-03", true, null)
+                ("late", "Official", "ABC", "US", "2006-03-15", true),
+                ("early", "Official", "ABC", "US", "2004-08-03", true)
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg, localYear: 2005);
             Assert.Equal("early", scored[0].Release.Id);
@@ -167,8 +154,8 @@ namespace MusicStrmExtract.Tests
             // 2004 原版带歧义描述,2006 再版无歧义且完整日期齐全;
             // 年份贴近相同层内应仍先比日期,不能被质量分把再版抬到原版前。
             var rg = BuildRgJson(
-                ("late", "Official", "ABC", "US", "2006-03-15", true, null),
-                ("early", "Official", "ABC", "US", "2004-08-03", true, "Sony DADC")
+                ("late", "Official", "ABC", "US", "2006-03-15", true),
+                ("early", "Official", "ABC", "US", "2004-08-03", true)
             );
 
             var scored = ReleaseGroupScorer.ScoreAll(rg, localYear: 2005);
@@ -181,8 +168,8 @@ namespace MusicStrmExtract.Tests
         {
             // localYear=null 时仅按分数排序，不做年份就近
             var rg = BuildRgJson(
-                ("a", "Official", "123", "US", "2014-10-27", true, null),
-                ("b", "Bootleg",  "123", "US", "2014-10-27", false, null)
+                ("a", "Official", "123", "US", "2014-10-27", true),
+                ("b", "Bootleg",  "123", "US", "2014-10-27", false)
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg, localYear: null);
             Assert.Equal("a", scored[0].Release.Id);
@@ -193,10 +180,10 @@ namespace MusicStrmExtract.Tests
         {
             // US 出现 2 次最多,应被选为默认偏好国家
             var rg = BuildRgJson(
-                ("us1", "Official", "ABC", "US", "2014-10-27", true, null),
-                ("us2", "Official", "ABC", "US", "2014-10-27", true, null),
-                ("jp1", "Official", "ABC", "JP", "2014-10-27", true, null),
-                ("cl1", "Official", "ABC", "CL", "2014-10-27", true, null)
+                ("us1", "Official", "ABC", "US", "2014-10-27", true),
+                ("us2", "Official", "ABC", "US", "2014-10-27", true),
+                ("jp1", "Official", "ABC", "JP", "2014-10-27", true),
+                ("cl1", "Official", "ABC", "CL", "2014-10-27", true)
             );
             var local = new LocalDisc();
             local.TrackNumbers.AddRange(Enumerable.Range(1, 13));
@@ -208,11 +195,11 @@ namespace MusicStrmExtract.Tests
         {
             // CA 有 3 个候选,但都是 Withdrawn/无 barcode,应被排除;US 才是多数
             var rg = BuildRgJson(
-                ("wd1", "Withdrawn", "XYZ", "CA", "2014-10-27", true, null),
-                ("wd2", "Withdrawn", "XYZ", "CA", "2014-10-27", true, null),
-                ("nb1", "Official", null, "CA", "2014-10-27", true, null),
-                ("us1", "Official", "ABC", "US", "2014-10-27", true, null),
-                ("us2", "Official", "ABC", "US", "2014-10-27", true, null)
+                ("wd1", "Withdrawn", "XYZ", "CA", "2014-10-27", true),
+                ("wd2", "Withdrawn", "XYZ", "CA", "2014-10-27", true),
+                ("nb1", "Official", null, "CA", "2014-10-27", true),
+                ("us1", "Official", "ABC", "US", "2014-10-27", true),
+                ("us2", "Official", "ABC", "US", "2014-10-27", true)
             );
             var local = new LocalDisc();
             local.TrackNumbers.AddRange(Enumerable.Range(1, 13));
@@ -224,9 +211,9 @@ namespace MusicStrmExtract.Tests
         {
             // US/AR/CL 同分;指定偏好 US 后,US 应排到第一
             var rg = BuildRgJson(
-                ("us", "Official", "602547071668", "US", "2014-10-27", true, null),
-                ("ar", "Official", "602547071668", "AR", "2014-10-27", true, null),
-                ("cl", "Official", "602547071668", "CL", "2014-10-27", true, null)
+                ("us", "Official", "602547071668", "US", "2014-10-27", true),
+                ("ar", "Official", "602547071668", "AR", "2014-10-27", true),
+                ("cl", "Official", "602547071668", "CL", "2014-10-27", true)
             );
             var withUs = ReleaseGroupScorer.ScoreAll(rg, preferredCountry: "US");
             Assert.Equal("us", withUs[0].Release.Id);
@@ -238,8 +225,8 @@ namespace MusicStrmExtract.Tests
         {
             // 偏好国只有 Bootleg 时,country 权重不应把 Bootleg 抬到 Official 之上
             var rg = BuildRgJson(
-                ("boot", "Bootleg", "ABC", "US", "2014-10-27", true, null),
-                ("official", "Official", "ABC", "GB", "2014-10-27", true, null)
+                ("boot", "Bootleg", "ABC", "US", "2014-10-27", true),
+                ("official", "Official", "ABC", "GB", "2014-10-27", true)
             );
             var scored = ReleaseGroupScorer.ScoreAll(rg, preferredCountry: "US");
 
@@ -253,14 +240,14 @@ namespace MusicStrmExtract.Tests
             // 同一实体版的高频条码覆盖多个国家,但 US 仍是多数国家;
             // 国家偏好应选 US 官方版,不能被国外高频条码的频次加分压过。
             var rg = BuildRgJson(
-                ("ar", "Official", "COMMON", "AR", "2014-10-27", true, null),
-                ("au", "Official", "COMMON", "AU", "2014-10-27", true, null),
-                ("bg", "Official", "COMMON", "BG", "2014-10-27", true, null),
-                ("cl", "Official", "COMMON", "CL", "2014-10-27", true, null),
-                ("xe", "Official", "COMMON", "XE", "2014-10-27", true, null),
-                ("us1", "Official", "843930013500", "US", "2014-10-27", true, null),
-                ("us2", "Official", "843930013500", "US", "2014-10-27", true, null),
-                ("us3", "Official", "843930013500", "US", "2014-10-27", true, null)
+                ("ar", "Official", "COMMON", "AR", "2014-10-27", true),
+                ("au", "Official", "COMMON", "AU", "2014-10-27", true),
+                ("bg", "Official", "COMMON", "BG", "2014-10-27", true),
+                ("cl", "Official", "COMMON", "CL", "2014-10-27", true),
+                ("xe", "Official", "COMMON", "XE", "2014-10-27", true),
+                ("us1", "Official", "843930013500", "US", "2014-10-27", true),
+                ("us2", "Official", "843930013500", "US", "2014-10-27", true),
+                ("us3", "Official", "843930013500", "US", "2014-10-27", true)
             );
             var local = new LocalDisc();
             local.TrackNumbers.AddRange(Enumerable.Range(1, 13));
@@ -277,7 +264,7 @@ namespace MusicStrmExtract.Tests
         {
             // 唯一候选无 barcode,不应产生偏好国家
             var rg = BuildRgJson(
-                ("a", "Official", null, "US", "2014-10-27", true, null)
+                ("a", "Official", null, "US", "2014-10-27", true)
             );
             var local = new LocalDisc();
             local.TrackNumbers.AddRange(Enumerable.Range(1, 13));

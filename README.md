@@ -102,7 +102,7 @@ Music Strm Extract 是 Emby 的本地元数据读取器插件，专门为音乐�
 - Emby 扫描或刷新 Audio 条目时，以本地元数据读取器身份调用插件；非 `.strm` 路径直接返回空结果。
 - 插件根据歌手文件夹与专辑文件夹在 MusicBrainz 定位 release-group（专辑概念），再从该组的 release（可购买发行版本）中挑选匹配版本。
 - 候选优先找“本地轨数与 MusicBrainz media 轨数逐碟完全一致，且本地覆盖 release 全部 media”的版本；没有 exact 时退回轨号覆盖匹配，避免普通版被豪华版抢走。
-- 多国家/多介质候选按状态、国家、年份贴近、完整日期、条码、CD 介质和歧义描述分层；残余同分按日期、质量分与稳定次序决定，不请求 Cover Art。
+- 多国家/多介质候选按状态、年份贴近、国家、完整日期、条码、CD 介质和歧义描述分层；残余同分按日期、质量分与稳定次序决定，不请求 Cover Art。
 - 整张专辑一次定位后缓存 30 分钟，同专辑后续 `.strm` 不再重复查询 MusicBrainz。
 - 按轨号从官方 tracklist 取回 recording MBID、标题与艺人，连同 release/album-artist/release-group MBID 一起返回给 Emby。
 - 评论轨沿用官方曲名并保留 `(Commentary)` 后缀。

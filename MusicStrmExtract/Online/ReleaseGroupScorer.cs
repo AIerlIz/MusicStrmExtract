@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using static MusicStrmExtract.Online.JsonUtil;
@@ -7,7 +7,7 @@ namespace MusicStrmExtract.Online
 {
     /// <summary>
     /// 对同 release-group 下的多个 release 进行分层排序。
-    /// 排序维度依次是:状态层、偏好国家层、年份贴近层、日期、同层质量分。
+    /// 排序维度依次是:状态层、年份贴近层、偏好国家层、日期、同层质量分。
     /// </summary>
     public static class ReleaseGroupScorer
     {
@@ -17,10 +17,10 @@ namespace MusicStrmExtract.Online
         private const int CompleteDateWeight = 10;
         private const int CdFormatWeight = 8;
         private const int JewelCaseWeight = 5;
-        private const int DisambiguationEmptyWeight = 10;
 
         private const long StatusRankBase = 1_000_000_000_000L;
-        private const long PreferredCountryRankBase = 100_000_000_000L;
+        private const long YearGapRankBase = 100_000L;
+        private const long CountryRankBase = 1_000L;
         private const int MissingYearDistance = 9999;
 
         /// <summary>
@@ -147,10 +147,12 @@ namespace MusicStrmExtract.Online
                 {
                     Country = g.Key,
                     Count = g.Count(),
-                    MaxBase = g.Max(r => ScoreRelease(r, barcodeCounts))
+                    MaxBase = g.Max(r => ScoreRelease(r, barcodeCounts)),
+                    EarliestDate = g.Min(r => string.IsNullOrWhiteSpace(r.Date) ? "9999" : r.Date!)
                 })
                 .OrderByDescending(g => g.Count)
                 .ThenByDescending(g => g.MaxBase)
+                .ThenBy(g => g.EarliestDate, StringComparer.Ordinal)
                 .ThenBy(g => g.Country, StringComparer.Ordinal)
                 .Select(g => g.Country)
                 .FirstOrDefault();
@@ -162,20 +164,22 @@ namespace MusicStrmExtract.Online
             string? preferredCountry)
         {
             var rank = ReleaseStatusPolicy.SearchPriority(release.Status) * StatusRankBase;
-            if (!string.IsNullOrWhiteSpace(preferredCountry)
-                && ReleaseStatusPolicy.IsOfficial(release.Status)
-                && !string.Equals(release.Country, preferredCountry, StringComparison.OrdinalIgnoreCase))
-            {
-                // 偏好国家的官方版先于其它国家的官方版,但不跨越状态层。
-                rank += PreferredCountryRankBase;
-            }
 
             if (localYear.HasValue)
             {
                 var releaseYear = ParseLeadingYear(release.Date);
-                rank += releaseYear.HasValue
+                var gap = releaseYear.HasValue
                     ? Math.Min(Math.Abs(releaseYear.Value - localYear.Value), MissingYearDistance)
                     : MissingYearDistance;
+                rank += gap * YearGapRankBase;
+            }
+
+            if (!string.IsNullOrWhiteSpace(preferredCountry)
+                && ReleaseStatusPolicy.IsOfficial(release.Status)
+                && !string.Equals(release.Country, preferredCountry, StringComparison.OrdinalIgnoreCase))
+            {
+                // 同状态、同年份贴近层内的国家偏好;不跨越年份贴近层。
+                rank += CountryRankBase;
             }
 
             return rank;
@@ -266,10 +270,6 @@ namespace MusicStrmExtract.Online
                 score += JewelCaseWeight;
             }
 
-            if (string.IsNullOrWhiteSpace(release.Disambiguation))
-            {
-                score += DisambiguationEmptyWeight;
-            }
 
             return score;
         }
