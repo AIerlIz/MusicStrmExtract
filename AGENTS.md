@@ -15,20 +15,16 @@
 - 若看到 `Album`/`AlbumArtists` 为空而 MBID 已有，通常不是 Provider 问题，而是条目尚未真正走一遍完整元数据刷新（库扫描只在文件变化时重跑 Provider；旧库需要触发一次刷新/扫描，或重新添加条目）。
 - 修改返回字段或落库相关代码时，用可回滚方式部署 DLL，刷新单个 `.strm`，读 `programdata/data/library.db`（或 API `Fields=AlbumArtist,ProviderIds`）确认 `AlbumId` 与 MusicAlbum 实体出现后再扩到全量。
 
-### Cover Art 镜像地址
-- `CoverArtBaseUrl` 同时影响两处：本地 Provider 选版时的 CAA 封面数查询，以及 RemoteProvider 返回给 Emby 的最终封面下载 URL。
-- 配置镜像时地址应以 `/` 或 `/release` 结尾；留空则使用官方 `https://coverartarchive.org/release/`。
-- 后续新增封面相关代码时不要写死官方地址，应继续通过 `CoverArtClient.BuildFrontImageUrl` 生成。
-
-### Remote Provider 只服务 .strm
-- `MusicStrmRemoteProvider` 只负责 `.strm` 封面：普通音频自带标签，不交给本插件做在线补全。
-- 修改 `GetMetadata`/`GetImages` 时保留 `.strm` 路径过滤，参考 `IsStrmPath`。
+### 封面边界
+- 封面交给 Emby 内置的 MusicBrainz 图像获取器：插件只负责补 `MusicBrainzAlbum` 等 ID，
+  不要注册自定义 `IRemoteImageProvider`，也不要再加回 `MusicStrmRemoteProvider` 的封面下载/`GetImages` 链路。
+- 选版不使用 CAA 封面图数量作同分决胜，也不要为了封面下载保留 `CoverArtBaseUrl`/`CoverArtClient`。
 - `OnlineResolver`/`MergePolicy` 已随普通音频在线补全链路一起移除，不要按 recording/text search 重新引入。
 
 ### 专辑定位缓存
 - `MusicStrmLocalProvider.AlbumCache` 使用通用 `TtlCache`：TTL 30 分钟、容量 500。
 - 过期项按插入序惰性清理，超容量只淘汰最旧条目；不要改成每次全表遍历或整体清空。
-- 缓存 key 包含 `MusicBrainzBaseUrl`/`CoverArtBaseUrl`，切换镜像后不会命中旧结果。
+- 缓存 key 包含 `MusicBrainzBaseUrl`，切换镜像后不会命中旧结果。
 - 修改缓存语义时同步维护 `TtlCacheTests`。
 
 ### 配置页运行按钮
@@ -40,8 +36,8 @@
 ### RG 选版与请求收敛
 - `AlbumSearch.SearchForTrackMapAsync` 把专辑文件夹先定位为 release-group（专辑概念），再从该组 release（可购买发行版本）中选实体版本；`MusicBrainzApi.GetReleaseGroupAsync` 返回 `ParsedReleaseGroup`，组级 ID/艺人信息要传给最终结果，不能只依赖 release 详情里碰巧带出的嵌套字段。
 - `AlbumSearch.SearchForTrackMapAsync` 会先检查 top-1 候选所在的 release-group；若当前 RG 没有轨数完全一致的 exact 命中，会继续检查搜索候选里其它 RG 的精确命中。
-- 找到首个 exact 后，只继续拉取真正同档的候选用于 CAA 决胜，避免逐个请求整个 release-group 的完整 tracklist。
-- 同分且双方 release 都缺年份/日期时仍属同档，应继续收集并交给 CAA 决胜。
+- 找到首个 exact 后直接返回，不继续拉取同档候选做外网决胜。
+- 残余同分在 `ReleaseGroupScorer.ScoreAll` 内按日期 → 质量分 → release id 稳定排序，不再依赖封面图。
 - 国家偏好只加给“官方状态且与偏好国家一致”的候选，不能把 Bootleg/Pseudo/Withdrawn 的低状态版本抬到官方版本之上。
 - 搜索候选状态排序与 RG 评分统一在 `ReleaseStatusPolicy.SearchPriority` / `ScoreWeight` 维护，不要另写一套字符串分类；修改优先级时同步 `ReleaseStatusPolicyTests`、`AlbumSearchSelectionTests` 和 `ReleaseGroupScorerTests`。
 - 修改这些排序、提前返回或断点逻辑时，同步维护 `AlbumSearchSelectionTests` 和 `ReleaseGroupScorerTests`。
@@ -52,6 +48,6 @@
 - 涉及新增 MusicBrainz 请求入口时统一走 `GetJsonRootAsync`，不要绕过缓存与限流直接发 `HttpClient`；测试中注入 `IHttpTransport` / `IRequestGate`。
 
 ### 发版与验证
-- 项目版本号需要手动同步：发新 tag 前更新 `MusicStrmExtract.csproj` 的 `Version`、`AssemblyVersion`、`FileVersion`。当前已同步为 `1.7.4.0`。
+- 项目版本号需要手动同步：发新 tag 前更新 `MusicStrmExtract.csproj` 的 `Version`、`AssemblyVersion`、`FileVersion`。当前已同步为 `1.7.5.0`。
 - 常规验证命令：`dotnet test tests\MusicStrmExtract.Tests\MusicStrmExtract.Tests.csproj -c Release --no-restore --nologo`。
-- 涉及封面、直写或刷新流程的改动，发布前建议连接 Emby Server 跑一次媒体库刷新。
+- 涉及选版、直写或刷新流程的改动，发布前建议连接 Emby Server 跑一次媒体库刷新。

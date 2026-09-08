@@ -20,7 +20,7 @@ namespace MusicStrmExtract.Ui
 
         public override string EditorTitle => "Music Strm Extract 设置";
 
-        public override string EditorDescription => "配置 MusicBrainz/Cover Art 地址,并运行旧库修复。";
+        public override string EditorDescription => "配置 MusicBrainz 服务地址,并运行旧库修复。";
 
         public ButtonItem RepairButton { get; set; }
 
@@ -30,15 +30,13 @@ namespace MusicStrmExtract.Ui
         {
             return new MusicStrmPageOptions
             {
-                MusicBrainzBaseUrl = config.MusicBrainzBaseUrl ?? string.Empty,
-                CoverArtBaseUrl = config.CoverArtBaseUrl ?? string.Empty
+                MusicBrainzBaseUrl = config.MusicBrainzBaseUrl ?? string.Empty
             };
         }
 
         internal void ApplyTo(PluginConfiguration config)
         {
             config.MusicBrainzBaseUrl = MusicBrainzBaseUrl;
-            config.CoverArtBaseUrl = CoverArtBaseUrl;
         }
     }
 }

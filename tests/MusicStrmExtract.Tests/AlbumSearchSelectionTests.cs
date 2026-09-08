@@ -11,7 +11,7 @@ using Xunit;
 
 namespace MusicStrmExtract.Tests
 {
-    /// <summary>针对 SearchForTrackMapAsync 的选版链路测试(使用假 MusicBrainz/CoverArt,不联网)。</summary>
+    /// <summary>针对 SearchForTrackMapAsync 的选版链路测试(使用假 MusicBrainz,不联网)。</summary>
     public class AlbumSearchSelectionTests
     {
         [Fact]
@@ -27,7 +27,7 @@ namespace MusicStrmExtract.Tests
             api.ReleaseDetails["us2"] = ReleaseDetail("us2", "1989", "US", 13, "2014-10-27");
             api.ReleaseDetails["ar1"] = ReleaseDetail("ar1", "1989", "AR", 13, "2014-10-27");
 
-            var result = await RunAsync(api, new FakeCoverArtClient());
+            var result = await RunAsync(api);
 
             Assert.True(result.Found);
             Assert.Contains(result.ReleaseMbid, new[] { "us1", "us2" });
@@ -36,9 +36,9 @@ namespace MusicStrmExtract.Tests
         }
 
         [Fact]
-        public async Task SearchForTrackMapAsync_CaaBreaksTiedCandidates()
+        public async Task SearchForTrackMapAsync_PicksDeterministicCandidateWhenTied()
         {
-            // 两个 US 版本同分,靠 Cover Art Archive 封面数(usA 9 图、usB 3 图)决胜
+            // 两个 US 版本完全同分,不再请求 CAA,按稳定次序取 usA
             var api = new FakeMusicBrainzApi
             {
                 SearchJson = SearchReleases("rg-1"),
@@ -47,20 +47,16 @@ namespace MusicStrmExtract.Tests
             api.ReleaseDetails["usA"] = ReleaseDetail("usA", "1989", "US", 13, "2014-10-27");
             api.ReleaseDetails["usB"] = ReleaseDetail("usB", "1989", "US", 13, "2014-10-27");
 
-            var cover = new FakeCoverArtClient();
-            cover.Counts["usA"] = 10009; // 有正面 + 9 图
-            cover.Counts["usB"] = 3;
-
-            var result = await RunAsync(api, cover);
+            var result = await RunAsync(api);
 
             Assert.True(result.Found);
             Assert.Equal("usA", result.ReleaseMbid);
         }
 
         [Fact]
-        public async Task SearchForTrackMapAsync_MissingDatesOnBothSides_StillTieBreakByCover()
+        public async Task SearchForTrackMapAsync_MissingDatesOnBothSides_PicksStableCandidate()
         {
-            // 双方同分且都缺完整日期时,ScoreAll 排序并列,仍应收集两个 exact 用 CAA 决胜。
+            // 双方同分且都缺日期时,不依赖封面图,按 release id 稳定取先者。
             var api = new FakeMusicBrainzApi
             {
                 SearchJson = SearchReleases("rg-1"),
@@ -69,20 +65,16 @@ namespace MusicStrmExtract.Tests
             api.ReleaseDetails["noDateA"] = ReleaseDetail("noDateA", "1989", "US", 13, "");
             api.ReleaseDetails["noDateB"] = ReleaseDetail("noDateB", "1989", "US", 13, "");
 
-            var cover = new FakeCoverArtClient();
-            cover.Counts["noDateA"] = 3;
-            cover.Counts["noDateB"] = 10009;
-
-            var result = await RunAsync(api, cover);
+            var result = await RunAsync(api);
 
             Assert.True(result.Found);
-            Assert.Equal("noDateB", result.ReleaseMbid);
+            Assert.Equal("noDateA", result.ReleaseMbid);
         }
 
         [Fact]
         public async Task SearchForTrackMapAsync_KeepsPreferredYear_WhenSameScore()
         {
-            // 同国、同分、但年份不同:CAA 不应覆盖"年份就近 → 原版优先"的排序意图
+            // 同国、同分、但年份不同:年份就近 → 原版优先,不因封面图而改变
             var api = new FakeMusicBrainzApi
             {
                 SearchJson = SearchReleases("rg-1"),
@@ -91,11 +83,7 @@ namespace MusicStrmExtract.Tests
             api.ReleaseDetails["orig"] = ReleaseDetail("orig", "1989", "US", 13, "2014-08-03");
             api.ReleaseDetails["reissue"] = ReleaseDetail("reissue", "1989", "US", 13, "2018-06-15");
 
-            var cover = new FakeCoverArtClient();
-            cover.Counts["orig"] = 2;        // 原版封面更少
-            cover.Counts["reissue"] = 10009; // 重版封面更多
-
-            var result = await RunAsync(api, cover);
+            var result = await RunAsync(api);
 
             Assert.True(result.Found);
             Assert.Equal("orig", result.ReleaseMbid);
@@ -111,7 +99,7 @@ namespace MusicStrmExtract.Tests
             };
             api.ReleaseDetails["top"] = ReleaseDetail("top", "1989", "US", 13, "2014-10-27");
 
-            var result = await RunAsync(api, new FakeCoverArtClient());
+            var result = await RunAsync(api);
 
             Assert.True(result.Found);
             Assert.Equal("top", result.ReleaseMbid);
@@ -134,7 +122,7 @@ namespace MusicStrmExtract.Tests
             api.ReleaseDetails["alt-rg1"] = ReleaseDetail("alt-rg1", "1989", "US", 14, "2014-10-27");
             api.ReleaseDetails["other-rg2"] = ReleaseDetail("other-rg2", "1989", "GB", 13, "2014-10-27");
 
-            var result = await RunAsync(api, new FakeCoverArtClient());
+            var result = await RunAsync(api);
 
             Assert.True(result.Found);
             Assert.Equal("other-rg2", result.ReleaseMbid);
@@ -157,17 +145,17 @@ namespace MusicStrmExtract.Tests
             };
             api.ReleaseDetails["exact"] = ReleaseDetail("exact", "1989", "US", 13, "2014-10-27");
 
-            var result = await RunAsync(api, new FakeCoverArtClient());
+            var result = await RunAsync(api);
 
             Assert.True(result.Found);
             Assert.Equal("exact", result.ReleaseMbid);
         }
 
-        private static async Task<AlbumSearchResult> RunAsync(FakeMusicBrainzApi api, FakeCoverArtClient cover)
+        private static async Task<AlbumSearchResult> RunAsync(FakeMusicBrainzApi api)
         {
             var local = new LocalDisc();
             local.TrackNumbers.AddRange(Enumerable.Range(1, 13));
-            return await new AlbumSearch(api, cover).SearchForTrackMapAsync(
+            return await new AlbumSearch(api).SearchForTrackMapAsync(
                 "1989 (2014)", "Artist", new[] { local }, CancellationToken.None).ConfigureAwait(false);
         }
 
@@ -248,12 +236,5 @@ namespace MusicStrmExtract.Tests
             private static JsonElement Parse(string json) => JsonDocument.Parse(json).RootElement;
         }
 
-        private sealed class FakeCoverArtClient : ICoverArtClient
-        {
-            public Dictionary<string, int> Counts { get; } = new Dictionary<string, int>(StringComparer.Ordinal);
-
-            public Task<int> GetCoverArtCountAsync(string releaseMbid, CancellationToken ct)
-                => Task.FromResult(Counts.TryGetValue(releaseMbid, out var count) ? count : 0);
-        }
     }
 }

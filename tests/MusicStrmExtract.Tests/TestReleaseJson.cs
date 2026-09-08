@@ -53,21 +53,5 @@ namespace MusicStrmExtract.Tests
             return JsonDocument.Parse(sb.ToString()).RootElement;
         }
 
-        public static JsonElement BuildCoverArt(int count, bool front)
-        {
-            var sb = new System.Text.StringBuilder("{\"images\":[");
-            for (var i = 0; i < count; i++)
-            {
-                if (i > 0)
-                {
-                    sb.Append(',');
-                }
-
-                sb.Append(front && i == 0 ? "{\"front\":true}" : "{\"front\":false}");
-            }
-
-            sb.Append("]}");
-            return JsonDocument.Parse(sb.ToString()).RootElement;
-        }
     }
 }

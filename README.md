@@ -1,6 +1,6 @@
 # Music Strm Extract
 
-Music Strm Extract 是一个 Emby 插件，给音乐库里的 `.strm` 音频补全 MusicBrainz 元数据。`.strm` 本身只是远程播放链接，没有可读取的音乐标签，插件会根据你的目录结构和文件名轨号，自动找到匹配的专辑和歌曲，补上标题、歌手、专辑、年份、碟号、轨号、MusicBrainz ID 和封面。
+Music Strm Extract 是一个 Emby 插件，给音乐库里的 `.strm` 音频补全 MusicBrainz 元数据。`.strm` 本身只是远程播放链接，没有可读取的音乐标签，插件会根据你的目录结构和文件名轨号，自动找到匹配的专辑和歌曲，补上标题、歌手、专辑、年份、碟号、轨号和 MusicBrainz ID；Emby 的内置图片获取器会据此拉取封面。
 
 ## 什么时候用
 
@@ -86,9 +86,9 @@ Music Strm Extract 是一个 Emby 插件，给音乐库里的 `.strm` 音频补�
 - 按轨号从官方 tracklist 取回标题、歌手、专辑、年份、轨号、碟号和 MusicBrainz IDs。
 - 评论轨沿用官方曲名，并在标题后保留 `(Commentary)`。
 - 候选版本优先匹配“本地轨数与 MusicBrainz media 轨数完全一致”的版本；没有完全一致时，退回轨号覆盖匹配，避免普通版被豪华版抢走。
-- 同一 release-group 存在多个国家/介质版本时，会比较本地年份与发行年份、实体条码、CD 格式、官方状态和多数国家；残余同档用 Cover Art Archive 封面数决胜。
+- 同一 release-group 存在多个国家/介质版本时，会比较本地年份与发行年份、实体条码、CD 格式、官方状态和多数国家；残余同分按日期、质量与稳定次序决定，不依赖封面图数量。
 - 自动建立或修正 Audio、MusicAlbum、MusicArtist 的归属关系。
-- 封面由 Emby 从配置的 Cover Art Archive 地址下载，不需要手写 `cover.jpg`。
+- 封面由 Emby 内置 MusicBrainz 图像获取器从 Cover Art Archive 拉取，插件不提供封面下载器。
 
 ## 配置
 
@@ -101,8 +101,6 @@ Music Strm Extract 是一个 Emby 插件，给音乐库里的 `.strm` 音频补�
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
 | `MusicBrainzBaseUrl` | 空 | MusicBrainz 服务地址。留空使用官方 `https://musicbrainz.org`；官方不稳定时可填写镜像，例如 `https://musicbrainz.emby.tv` |
-| `CoverArtBaseUrl` | 空 | Cover Art Archive 服务地址，同时用于选版时查询封面数和给 Emby 的封面下载 URL。留空使用官方 `https://coverartarchive.org/release/`；网络受限时可填写镜像地址，需以 `/` 或 `/release` 结尾 |
-
 ## 首次使用
 
 保持目录结构后，执行一次媒体库扫描，或对音频条目执行“刷新元数据”。之后在 Emby 中打开 Audio 或 MusicAlbum，检查标题、歌手、专辑、年份、封面和 MusicBrainz 信息是否已出现。
@@ -114,6 +112,10 @@ Music Strm Extract 是一个 Emby 插件，给音乐库里的 `.strm` 音频补�
 **MusicBrainz 连接不稳定怎么办？**
 
 在插件设置里填写可用的镜像地址。MusicBrainz 不可达时插件不会用其它来源补全，也不会写入未经验证的脏元数据。
+
+**封面没有出现？**
+
+封面下载由 Emby 内置 MusicBrainz 图像获取器完成，插件不参与，选版也不依赖封面图数量。请确认音乐库的 MusicAlbum 图片获取程序里启用了 MusicBrainz，且 Emby 能访问 Cover Art Archive。
 
 **为什么某些 `.strm` 没有补全？**
 

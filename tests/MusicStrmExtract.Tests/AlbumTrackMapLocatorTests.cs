@@ -25,8 +25,7 @@ namespace MusicStrmExtract.Tests
             var locator = new AlbumTrackMapLocator(
                 CreateLogger(),
                 cache,
-                _ => api,
-                _ => new FakeCoverArtClient());
+                _ => api);
             var local = new LocalDisc();
             local.TrackNumbers.AddRange(Enumerable.Range(1, 10));
             var config = new PluginConfiguration();
@@ -102,14 +101,6 @@ namespace MusicStrmExtract.Tests
 
             public void Dispose()
             {
-            }
-        }
-
-        private sealed class FakeCoverArtClient : ICoverArtClient
-        {
-            public Task<int> GetCoverArtCountAsync(string releaseMbid, CancellationToken ct)
-            {
-                return Task.FromResult(0);
             }
         }
 

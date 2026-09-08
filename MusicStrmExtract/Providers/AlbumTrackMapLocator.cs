@@ -22,7 +22,6 @@ namespace MusicStrmExtract.Providers
         private readonly ILogger _logger;
         private readonly TtlCache<AlbumSearchResult> _cache;
         private readonly Func<string?, IMusicBrainzApi> _apiFactory;
-        private readonly Func<string?, ICoverArtClient> _coverArtFactory;
         private readonly ConcurrentDictionary<string, Task<AlbumSearchResult>> _inflight =
             new ConcurrentDictionary<string, Task<AlbumSearchResult>>(StringComparer.Ordinal);
 
@@ -30,21 +29,18 @@ namespace MusicStrmExtract.Providers
             : this(
                 logger,
                 cache,
-                baseUrl => new MusicBrainzApi(baseUrl),
-                coverArtBaseUrl => new CoverArtClient(coverArtBaseUrl))
+                baseUrl => new MusicBrainzApi(baseUrl))
         {
         }
 
         internal AlbumTrackMapLocator(
             ILogger logger,
             TtlCache<AlbumSearchResult> cache,
-            Func<string?, IMusicBrainzApi> apiFactory,
-            Func<string?, ICoverArtClient> coverArtFactory)
+            Func<string?, IMusicBrainzApi> apiFactory)
         {
             _logger = logger;
             _cache = cache;
             _apiFactory = apiFactory;
-            _coverArtFactory = coverArtFactory;
         }
 
         public async Task<AlbumSearchResult> GetOrSearchAsync(
@@ -97,8 +93,7 @@ namespace MusicStrmExtract.Providers
         {
             using var api = _apiFactory(
                 string.IsNullOrWhiteSpace(config.MusicBrainzBaseUrl) ? null : config.MusicBrainzBaseUrl);
-            var coverArt = _coverArtFactory(config.CoverArtBaseUrl);
-            var search = new AlbumSearch(api, coverArt);
+            var search = new AlbumSearch(api);
             var result = await search.SearchForTrackMapAsync(albumFolder, artistFolder, localDiscs, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
 
@@ -126,12 +121,9 @@ namespace MusicStrmExtract.Providers
             var musicBrainzSource = string.IsNullOrWhiteSpace(config.MusicBrainzBaseUrl)
                 ? "official"
                 : config.MusicBrainzBaseUrl.Trim().TrimEnd('/');
-            var coverArtSource = string.IsNullOrWhiteSpace(config.CoverArtBaseUrl)
-                ? "official"
-                : config.CoverArtBaseUrl.Trim().TrimEnd('/');
 
             // 服务地址也进 key:切换镜像后不应继续命中旧镜像缓存的专辑定位结果。
-            return $"{albumFolder}|{artistFolder}|{layout}|{musicBrainzSource}|{coverArtSource}";
+            return $"{albumFolder}|{artistFolder}|{layout}|{musicBrainzSource}";
         }
     }
 }

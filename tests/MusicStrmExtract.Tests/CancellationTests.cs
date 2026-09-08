@@ -22,18 +22,12 @@ namespace MusicStrmExtract.Tests
 
             await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
             {
-                await new AlbumSearch(api, new NoCoverClient()).SearchForTrackMapAsync(
+                await new AlbumSearch(api).SearchForTrackMapAsync(
                     "Album",
                     "Artist",
                     new[] { local },
                     cts.Token);
             });
-        }
-
-        private sealed class NoCoverClient : ICoverArtClient
-        {
-            public Task<int> GetCoverArtCountAsync(string releaseMbid, CancellationToken ct)
-                => Task.FromResult(0);
         }
 
         private sealed class CancelOnRgLookupApi : IMusicBrainzApi

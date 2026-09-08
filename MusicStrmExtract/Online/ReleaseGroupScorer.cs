@@ -65,7 +65,18 @@ namespace MusicStrmExtract.Online
                         a.Release.Date ?? "9999",
                         b.Release.Date ?? "9999",
                         StringComparison.Ordinal);
-                    return cmp != 0 ? cmp : b.Score.CompareTo(a.Score);
+                    if (cmp != 0)
+                    {
+                        return cmp;
+                    }
+
+                    cmp = b.Score.CompareTo(a.Score);
+                    return cmp != 0
+                        ? cmp
+                        : string.Compare(
+                            a.Release.Id ?? string.Empty,
+                            b.Release.Id ?? string.Empty,
+                            StringComparison.Ordinal);
                 });
             }
             else
@@ -73,7 +84,27 @@ namespace MusicStrmExtract.Online
                 result.Sort((a, b) =>
                 {
                     var cmp = a.Rank.CompareTo(b.Rank);
-                    return cmp != 0 ? cmp : b.Score.CompareTo(a.Score);
+                    if (cmp != 0)
+                    {
+                        return cmp;
+                    }
+
+                    cmp = b.Score.CompareTo(a.Score);
+                    if (cmp != 0)
+                    {
+                        return cmp;
+                    }
+
+                    cmp = string.Compare(
+                        a.Release.Date ?? "9999",
+                        b.Release.Date ?? "9999",
+                        StringComparison.Ordinal);
+                    return cmp != 0
+                        ? cmp
+                        : string.Compare(
+                            a.Release.Id ?? string.Empty,
+                            b.Release.Id ?? string.Empty,
+                            StringComparison.Ordinal);
                 });
             }
 
@@ -121,31 +152,6 @@ namespace MusicStrmExtract.Online
                 .ThenBy(g => g.Country, StringComparer.Ordinal)
                 .Select(g => g.Country)
                 .FirstOrDefault();
-        }
-
-        /// <summary>
-        /// 两个候选是否处于同一排序层(同状态/国家/年份贴近)且质量分与日期一致;
-        /// 只有这样的残余并列才允许交给 CAA 决胜。
-        /// </summary>
-        internal static bool AreInSameRankingTier(
-            RankedRelease first,
-            RankedRelease second,
-            int? localYear)
-        {
-            if (first.Rank != second.Rank || first.Score != second.Score)
-            {
-                return false;
-            }
-
-            if (localYear is null)
-            {
-                return true;
-            }
-
-            return string.Equals(
-                first.Release.Date ?? "9999",
-                second.Release.Date ?? "9999",
-                StringComparison.Ordinal);
         }
 
         private static long BuildRank(
