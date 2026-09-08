@@ -117,6 +117,11 @@ Music Strm Extract 是一个 Emby 插件，给音乐库里的 `.strm` 音频补�
 
 封面下载由 Emby 内置 MusicBrainz 图像获取器完成，插件不参与，选版也不依赖封面图数量。请确认音乐库的 MusicAlbum 图片获取程序里启用了 MusicBrainz，且 Emby 能访问 Cover Art Archive。
 
+**媒体库里的“元数据下载器”和“元数据读取器”怎么设置？**
+
+“元数据下载器”是给 Emby 在线 Provider 用的，本插件不需要；旧版本残留的 `Music Strm Extract (在线)` 可以直接删除。
+“元数据读取器”则是插件真正的工作入口，请保持 `Music Strm Extract` 启用，禁用后 `.strm` 将不再补全元数据。
+
 **为什么某些 `.strm` 没有补全？**
 
 常见原因：

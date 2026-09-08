@@ -11,6 +11,8 @@
 
 ### 本地 Provider 不再直写库
 - `MusicStrmLocalProvider` 已移除 `SyncRepositoryItem`，定位成功后只返回 `MetadataResult<Audio>`，由 Emby 合并保存。不要再加回 Provider 内 `UpdateToRepository` 直写。
+- `MusicStrmLocalProvider` 是本地元数据读取器：媒体库的 `MetadataReaders` 必须保留启用；
+  媒体库的 `MetadataFetchers`（在线下载器）不需要启用本插件，也不要再加回远程元数据 Provider。
 - Emby 4.9.5 实测：`Audio.Album` 是 `AlbumItem?.Name` 的计算字段，字符串不会单独落库；专辑关系以 `AlbumId -> MusicAlbum` 保存。Provider 返回带 `Album` + `AlbumArtists` + `MusicBrainzAlbum` 的 Audio 后，`SqliteItemRepository.SaveAlbumIfNeeded` 会自动创建/复用虚拟 `MusicAlbum` 并链接 `MusicAlbumArtist`。
 - 若看到 `Album`/`AlbumArtists` 为空而 MBID 已有，通常不是 Provider 问题，而是条目尚未真正走一遍完整元数据刷新（库扫描只在文件变化时重跑 Provider；旧库需要触发一次刷新/扫描，或重新添加条目）。
 - 修改返回字段或落库相关代码时，用可回滚方式部署 DLL，刷新单个 `.strm`，读 `programdata/data/library.db`（或 API `Fields=AlbumArtist,ProviderIds`）确认 `AlbumId` 与 MusicAlbum 实体出现后再扩到全量。
