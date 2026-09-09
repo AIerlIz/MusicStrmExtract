@@ -69,7 +69,7 @@ internal static class AlbumDirectoryScanner
                 }
             }
         }
-        catch (Exception ex)
+        catch (IOException ex)
         {
             // 目录读取失败时返回已收集到的碟组;部分已收集的数据仍可用于定位
             warning?.Invoke(

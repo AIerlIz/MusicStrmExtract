@@ -5,7 +5,7 @@ using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Model.Drawing;
 using MediaBrowser.Model.Plugins.UI;
 using MusicStrmExtract.Ui;
-using System.Xml.Linq;
+using System.Xml;\nusing System.Xml.Linq;
 
 namespace MusicStrmExtract;
 
@@ -92,7 +92,7 @@ public class Plugin : BasePluginSimpleUI<PluginConfiguration>, IHasThumbImage, I
 
             SaveOptions(migrated);
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is XmlException or IOException)
         {
             // 旧 XML 保留在原处,可由用户手动迁移,不阻塞插件启动
         }

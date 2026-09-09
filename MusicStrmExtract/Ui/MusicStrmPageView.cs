@@ -93,7 +93,7 @@ internal sealed class MusicStrmPageView : IPluginPageView, IDisposable
 
     public Task Cancel()
     {
-        _repairCts?.Cancel();
+        _repairCts?.CancelAsync();
         _repairCts?.Dispose();
         _repairCts = null;
         return Task.CompletedTask;

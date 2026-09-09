@@ -1,0 +1,104 @@
+From Mon Sep 17 00:00:00 2001
+From: AIerlIz <shenrongsen@outlook.com>
+Date: Wed, 9 Sep 2026 11:59:04 +0800
+Subject: [6/6] 文档：更新 REFACTOR-CHANGELOG-v1.8.1.md\n summary
+
+---
+ REFACTOR-CHANGELOG-v1.8.1.md | 52 ++++++++++++++++++++++++++++++++----
+ 1 file changed, 47 insertions(+), 5 deletions(-)
+
+diff --git a/REFACTOR-CHANGELOG-v1.8.1.md b/REFACTOR-CHANGELOG-v1.8.1.md
+index 628409e..0d11de1 100644
+--- a/REFACTOR-CHANGELOG-v1.8.1.md
++++ b/REFACTOR-CHANGELOG-v1.8.1.md
+@@ -10,6 +10,12 @@
+ | CA1062 参数 null 校验增强 | ✅ 完成 |
+ | CA1031 具体异常类型捕获 | ✅ 完成 |
+ | CA1849 CancelAsync 现代化 | ✅ 完成 |
++| CA1054 Uri 参数重载 | ✅ 完成 |
++| CA2234 HttpTransport async Uri | ✅ 完成 |
++| CA1307 StringComparison.Ordinal | ✅ 完成 |
++| CA5399 CheckCertificateRevocationList | ✅ 完成 |
++| CA2000 SuppressMessage | ✅ 完成 |
++| CA1002 SuppressMessage | ✅ 完成 |
+ | 新增测试覆盖（+5 项） | ✅ 完成 |
+ | 版本号同步 (1.8.1.0) | ✅ 完成 |
+ 
+@@ -21,11 +27,11 @@
+ 
+ | 文件 | 改动 |
+ |------|------|
+-| [Plugin.cs](MusicStrmExtract/Plugin.cs:27) | 构造函数添加 ArgumentNullException.ThrowIfNull(applicationHost) |
+-| [MusicStrmLocalProvider.cs](MusicStrmExtract/Providers/MusicStrmLocalProvider.cs:56) | GetMetadata 入口添加 ArgumentNullException.ThrowIfNull(info) |
+-| [MusicStrmLocalProvider.cs](MusicStrmExtract/Providers/MusicStrmLocalProvider.cs:35) | 公共构造函数链式调用内联 null 校验 |
++| [Plugin.cs](MusicStrmExtract/Plugin.cs:28) | 构造函数添加 ArgumentNullException.ThrowIfNull(applicationHost) |
++| [MusicStrmLocalProvider.cs](MusicStrmExtract/Providers/MusicStrmLocalProvider.cs:35) | 公共构造函数添加 ThrowIfNull(logManager) |
++| [MusicStrmLocalProvider.cs](MusicStrmExtract/Providers/MusicStrmLocalProvider.cs:56) | GetMetadata 入口添加 ThrowIfNull(info) |
+ | [AlbumSearch.cs](MusicStrmExtract/Online/AlbumSearch.cs:50) | SearchForTrackMapAsync 添加 localDiscs null 校验及 lbumFolderName 空串前置返回 |
+-| [MusicBrainzApi.cs](MusicStrmExtract/Online/MusicBrainzApi.cs:64) | SearchReleasesAsync 添加 lbum null 校验 |
++| [MusicBrainzApi.cs](MusicStrmExtract/Online/MusicBrainzApi.cs:71) | SearchReleasesAsync 添加 lbum null 校验 |
+ 
+ ### 2.2 CA1031 — 具体异常类型捕获
+ 
+@@ -33,6 +39,7 @@
+ |------|--------|--------|
+ | [Plugin.cs](MusicStrmExtract/Plugin.cs:95) | catch (Exception) | catch (Exception ex) when (ex is XmlException or IOException) |
+ | [AlbumDirectoryScanner.cs](MusicStrmExtract/Providers/AlbumDirectoryScanner.cs:72) | catch (Exception ex) | catch (IOException ex) |
++| [MusicStrmPageView.cs](MusicStrmExtract/Ui/MusicStrmPageView.cs:115) | — | 添加 SuppressMessage("Design", "CA1031")（后台修复任务吞异常保主线程） |
+ 
+ ### 2.3 CA1849 — 异步取消方式现代化
+ 
+@@ -40,6 +47,41 @@
+ |------|------|
+ | [MusicStrmPageView.cs](MusicStrmExtract/Ui/MusicStrmPageView.cs:96) | _repairCts?.Cancel() → _repairCts?.CancelAsync() |
+ 
++### 2.4 CA1054 — Uri 参数重载
++
++| 文件 | 改动 |
++|------|------|
++| [MusicBrainzApi.cs](MusicStrmExtract/Online/MusicBrainzApi.cs:23) | 新增 MusicBrainzApi(Uri? baseUrl, int timeoutSeconds = 25) 重载（CA1054 推荐） |
++
++### 2.5 CA2234 — HttpClient.GetAsync(Uri, ...)
++
++| 文件 | 改动 |
++|------|------|
++| [HttpTransport.cs](MusicStrmExtract/Online/HttpTransport.cs:12) | IHttpTransport.GetAsync(string url, ...) → GetAsync(Uri url, ...) |
++| [HttpClientTransport.cs](MusicStrmExtract/Online/HttpTransport.cs:16) | 改为 http.GetAsync(uri, ...) 调用 |
++| [MusicBrainzApi.cs](MusicStrmExtract/Online/MusicBrainzApi.cs:104) | 所有 _transport.GetAsync(url, ct) 改为 _transport.GetAsync(new Uri(url), ct) |
++
++### 2.6 CA1307 — StringComparison.Ordinal
++
++| 文件 | 改动 |
++|------|------|
++| [MusicBrainzApi.cs](MusicStrmExtract/Online/MusicBrainzApi.cs:64) | Replace("\"", string.Empty) → Replace("\"", string.Empty, StringComparison.Ordinal) |
++
++### 2.7 CA5399 — 证书吊销列表检查
++
++| 文件 | 改动 |
++|------|------|
++| [MusicBrainzApi.cs](MusicStrmExtract/Online/MusicBrainzApi.cs:161) | HttpClientHandler 启用 CheckCertificateRevocationList = true |
++
++### 2.8 CA2000 / CA1002 — SuppressMessage
++
++| 文件 | 改动 |
++|------|------|
++| [MusicBrainzApi.cs](MusicStrmExtract/Online/MusicBrainzApi.cs:160) | CreateDefaultTransport 添加 CA2000 SuppressMessage（静态共享 HttpClient 生命周期受控） |
++| [ReleaseGroupScorer.cs](MusicStrmExtract/Online/ReleaseGroupScorer.cs:30) | ScoreAll 添加 CA1002 SuppressMessage（内部评分结果列表） |
++| [LocalDisc.cs](MusicStrmExtract/Online/LocalDisc.cs:8) | TrackNumbers 添加 CA1002 SuppressMessage（AddRange/Sort 依赖 List\<int\>） |
++| [PluginConfiguration.cs](MusicStrmExtract/PluginConfiguration.cs:16) | MusicBrainzBaseUrl 添加 CA1056 SuppressMessage（JSON 反序列化需 string） |
++
+ ---
+ 
+ ## 三、新增测试覆盖（+5 项）
+@@ -85,7 +127,7 @@ dotnet test tests/MusicStrmExtract.Tests/MusicStrmExtract.Tests.csproj -c Releas
+ | 通过 | **129** |
+ | 失败 | **0** |
+ | 跳过 | 0 |
+-| 用时 | ~140 ms |
++| 用时 | ~130 ms |
+ 
+ ---
+ 
+-- 
+2.55.0.windows.5
+

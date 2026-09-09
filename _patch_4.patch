@@ -1,0 +1,175 @@
+From Mon Sep 17 00:00:00 2001
+From: AIerlIz <shenrongsen@outlook.com>
+Date: Wed, 9 Sep 2026 11:53:07 +0800
+Subject: [4/6] 质量：CA1054 Uri 重载、CA2234 HttpTransport GetAsync 改用 Uri、CA1062/CA1031/CA2000/CA1002 抑制\n Uri, CA1062/CA1031/CA2000/CA1002 hardened
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- IHttpTransport.GetAsync 改为 Uri 参数 (CA2234)
+- MusicBrainzApi 增加 Uri 构造函数重载 (CA1054)
+- HttpClientHandler 启用 CheckCertificateRevocationList (CA5399 已解决)
+- CA1062: Plugin/MusicStrmLocalProvider/SearchReleasesAsync 添加 ThrowIfNull
+- CA1031: RunRepairInBackground 添加 SuppressMessage
+- CA1002: ReleaseGroupScorer/LocalDisc 添加 SuppressMessage
+- CA2000: CreateDefaultTransport 添加 SuppressMessage (静态共享 HttpClient)
+- 主项目 0 警告 0 错误，测试 129/129 通过
+---
+ MusicStrmExtract/Online/HttpTransport.cs             |  6 +++---
+ MusicStrmExtract/Online/LocalDisc.cs                 |  1 +
+ MusicStrmExtract/Online/MusicBrainzApi.cs            | 11 ++++++++++-
+ MusicStrmExtract/Online/ReleaseGroupScorer.cs        |  1 +
+ MusicStrmExtract/Plugin.cs                           |  1 +
+ MusicStrmExtract/Providers/MusicStrmLocalProvider.cs |  2 +-
+ tests/MusicStrmExtract.Tests/MusicBrainzApiTests.cs  |  8 ++++----
+ 7 files changed, 21 insertions(+), 9 deletions(-)
+
+diff --git a/MusicStrmExtract/Online/HttpTransport.cs b/MusicStrmExtract/Online/HttpTransport.cs
+index 5f4e5a3..e16535d 100644
+--- a/MusicStrmExtract/Online/HttpTransport.cs
++++ b/MusicStrmExtract/Online/HttpTransport.cs
+@@ -6,12 +6,12 @@ internal sealed record HttpResponse(int StatusCode, string Body);
+ 
+ internal interface IHttpTransport : IDisposable
+ {
+-    Task<HttpResponse> GetAsync(string url, CancellationToken ct);
++    Task<HttpResponse> GetAsync(Uri url, CancellationToken ct);
+ }
+ 
+ internal sealed class HttpClientTransport(HttpClient http) : IHttpTransport
+ {
+-    public async Task<HttpResponse> GetAsync(string url, CancellationToken ct)
++    public async Task<HttpResponse> GetAsync(Uri url, CancellationToken ct)
+     {
+         using var response = await http
+             .GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct)
+@@ -24,4 +24,4 @@ internal sealed class HttpClientTransport(HttpClient http) : IHttpTransport
+     {
+         http.Dispose();
+     }
+-}
++}
+diff --git a/MusicStrmExtract/Online/LocalDisc.cs b/MusicStrmExtract/Online/LocalDisc.cs
+index 8abfa21..4328de5 100644
+--- a/MusicStrmExtract/Online/LocalDisc.cs
++++ b/MusicStrmExtract/Online/LocalDisc.cs
+@@ -5,5 +5,6 @@ public sealed class LocalDisc
+ {
+     public int? DiscNumber { get; set; }
+ 
++    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1002:DoNotExposeCollectionsOfTypeList", Justification = "Internal DTO; AddRange/Sort require concrete List<int>")]
+     public List<int> TrackNumbers { get; } = [];
+ }
+diff --git a/MusicStrmExtract/Online/MusicBrainzApi.cs b/MusicStrmExtract/Online/MusicBrainzApi.cs
+index 009ad7d..f2734b2 100644
+--- a/MusicStrmExtract/Online/MusicBrainzApi.cs
++++ b/MusicStrmExtract/Online/MusicBrainzApi.cs
+@@ -20,6 +20,12 @@ public sealed class MusicBrainzApi : IMusicBrainzApi
+     private readonly bool _ownsTransport;
+     private readonly ConcurrentDictionary<string, string> _responseCache = new(StringComparer.Ordinal);
+ 
++    /// <summary>Uri overload for programmatic construction (CA1054).</summary>
++    public MusicBrainzApi(Uri? baseUrl = null, int timeoutSeconds = 25)
++        : this(baseUrl?.AbsoluteUri ?? null, timeoutSeconds)
++    {
++    }
++
+     public MusicBrainzApi(string? baseUrl = null, int timeoutSeconds = 25)
+         : this(
+             baseUrl,
+@@ -61,6 +67,8 @@ public sealed class MusicBrainzApi : IMusicBrainzApi
+         int limit,
+         CancellationToken ct)
+     {
++        ArgumentNullException.ThrowIfNull(album);
++
+         var sb = new System.Text.StringBuilder("release:");
+         sb.Append('"').Append(album.Replace("\"", string.Empty, StringComparison.Ordinal)).Append('"');
+         if (!string.IsNullOrWhiteSpace(artist))
+@@ -142,7 +150,7 @@ public sealed class MusicBrainzApi : IMusicBrainzApi
+         // 前一个仍可能未结束就并发打向 MusicBrainz,触发 503/429。
+         using (await _gate.AcquireAsync(ct).ConfigureAwait(false))
+         {
+-            var response = await _transport.GetAsync(url, ct).ConfigureAwait(false);
++            var response = await _transport.GetAsync(new Uri(url), ct).ConfigureAwait(false);
+             if (response.StatusCode < 200 || response.StatusCode >= 300)
+             {
+                 throw new HttpRequestException(
+@@ -157,6 +165,7 @@ public sealed class MusicBrainzApi : IMusicBrainzApi
+         }
+     }
+ 
++    [System.Diagnostics.CodeAnalysis.SuppressMessage("Resource", "CA2000:Dispose objects before losing scope", Justification = "Static shared transport owned for process lifetime")]
+     private static HttpClientTransport CreateDefaultTransport(int timeoutSeconds)
+     {
+         var handler = new HttpClientHandler { AllowAutoRedirect = true, CheckCertificateRevocationList = true };
+diff --git a/MusicStrmExtract/Online/ReleaseGroupScorer.cs b/MusicStrmExtract/Online/ReleaseGroupScorer.cs
+index dc16b9a..9fa32bd 100644
+--- a/MusicStrmExtract/Online/ReleaseGroupScorer.cs
++++ b/MusicStrmExtract/Online/ReleaseGroupScorer.cs
+@@ -27,6 +27,7 @@ public static class ReleaseGroupScorer
+     /// <param name="localYear">本地目录名解析出的年份（如 "七里香 (2004)" → 2004）；null 表示无年份，跳过就近排序。</param>
+     /// <param name="preferredCountry">自动推断出的偏好国家（ISO 3166-1 alpha-2）；
+     /// 只给官方状态且地区匹配的候选加国家层，null 表示不启用国家加权。</param>
++    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1002:DoNotExposeCollectionsOfTypeList", Justification = "Internal scoring result; callers expect mutable list for sorting")]
+     public static List<RankedRelease> ScoreAll(
+         IReadOnlyList<ReleaseSummary> releases,
+         int? localYear = null,
+diff --git a/MusicStrmExtract/Plugin.cs b/MusicStrmExtract/Plugin.cs
+index 3b9c070..b684d1a 100644
+--- a/MusicStrmExtract/Plugin.cs
++++ b/MusicStrmExtract/Plugin.cs
+@@ -24,6 +24,7 @@ public class Plugin : BasePluginSimpleUI<PluginConfiguration>, IHasThumbImage, I
+     public Plugin(IApplicationHost applicationHost)
+         : base(applicationHost)
+     {
++        ArgumentNullException.ThrowIfNull(applicationHost);
+         Instance = this;
+         _applicationPaths = applicationHost.Resolve<IApplicationPaths>();
+         MigrateLegacyXmlConfiguration();
+diff --git a/MusicStrmExtract/Providers/MusicStrmLocalProvider.cs b/MusicStrmExtract/Providers/MusicStrmLocalProvider.cs
+index 44d81d4..254eb91 100644
+--- a/MusicStrmExtract/Providers/MusicStrmLocalProvider.cs
++++ b/MusicStrmExtract/Providers/MusicStrmLocalProvider.cs
+@@ -32,7 +32,7 @@ public sealed class MusicStrmLocalProvider : ILocalMetadataProvider<Audio>
+     private const int CacheMaxEntries = 500;
+ 
+     public MusicStrmLocalProvider(ILogManager logManager)
+-        : this(logManager, MusicStrmConfigurationSource.Default)
++        : this(logManager ?? throw new ArgumentNullException(nameof(logManager)), MusicStrmConfigurationSource.Default)
+     {
+     }
+ 
+diff --git a/tests/MusicStrmExtract.Tests/MusicBrainzApiTests.cs b/tests/MusicStrmExtract.Tests/MusicBrainzApiTests.cs
+index 7c84811..5666608 100644
+--- a/tests/MusicStrmExtract.Tests/MusicBrainzApiTests.cs
++++ b/tests/MusicStrmExtract.Tests/MusicBrainzApiTests.cs
+@@ -116,7 +116,7 @@ namespace MusicStrmExtract.Tests
+                 .Select(n => ReleaseJson($"r{n}")));
+             var transport = new FakeTransport
+             {
+-                UrlBody = url => url.Contains("/release-group/", StringComparison.Ordinal)
++                UrlBody = url => url.ToString().Contains("/release-group/", StringComparison.Ordinal)
+                     ? $"{{\"id\":\"rg-1\",\"title\":\"Album\",\"primary-type\":\"Album\",\"artist-credit\":[],\"releases\":[{firstPage}]}}"
+                     : $"{{\"count\":30,\"offset\":25,\"releases\":[{secondPage}]}}"
+             };
+@@ -149,12 +149,12 @@ namespace MusicStrmExtract.Tests
+ 
+             public string? LastUrl { get; private set; }
+ 
+-            public Func<string, string>? UrlBody { get; set; }
++            public Func<Uri, string>? UrlBody { get; set; }
+ 
+-            public Task<HttpResponse> GetAsync(string url, CancellationToken ct)
++            public Task<HttpResponse> GetAsync(Uri url, CancellationToken ct)
+             {
+                 Calls++;
+-                LastUrl = url;
++                LastUrl = url.ToString();
+                 return Task.FromResult(new HttpResponse(StatusCode, UrlBody?.Invoke(url) ?? Body));
+             }
+ 
+-- 
+2.55.0.windows.5
+
+

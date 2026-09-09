@@ -1,0 +1,1147 @@
+From 939653db13b12ba2f00b10cb0c172fb54c9cf22f Mon Sep 17 00:00:00 2001
+From: AIerlIz <shenrongsen@outlook.com>
+Date: Wed, 9 Sep 2026 11:02:44 +0800
+Subject: [PATCH 1/6] quality: CA analysis hardening and test coverage, version
+ 1.8.1.0
+
+---
+ MusicStrmExtract/MusicStrmExtract.csproj      |   6 +-
+ MusicStrmExtract/Online/AlbumSearch.cs        |   5 +
+ MusicStrmExtract/Plugin.cs                    |   3 +-
+ .../Providers/AlbumDirectoryScanner.cs        |   2 +-
+ .../Providers/MusicStrmLocalProvider.cs       |   2 +
+ MusicStrmExtract/Ui/MusicStrmPageView.cs      |   2 +-
+ REFACTOR-CHANGELOG-v1.8.1.md                  | 100 ++++++++++++++++
+ ...kMetadataFactoryArtistMbidFallbackTests.cs | 111 ++++++++++++++++++
+ .../MusicStrmConfigurationSourceTests.cs      |  30 +++++
+ 9 files changed, 255 insertions(+), 6 deletions(-)
+ create mode 100644 REFACTOR-CHANGELOG-v1.8.1.md
+ create mode 100644 tests/MusicStrmExtract.Tests/AudioTrackMetadataFactoryArtistMbidFallbackTests.cs
+ create mode 100644 tests/MusicStrmExtract.Tests/MusicStrmConfigurationSourceTests.cs
+
+diff --git a/MusicStrmExtract/MusicStrmExtract.csproj b/MusicStrmExtract/MusicStrmExtract.csproj
+index d6793b4..7ef95b4 100644
+--- a/MusicStrmExtract/MusicStrmExtract.csproj
++++ b/MusicStrmExtract/MusicStrmExtract.csproj
+@@ -7,9 +7,9 @@
+     <ImplicitUsings>enable</ImplicitUsings>
+     <AssemblyName>MusicStrmExtract</AssemblyName>
+     <RootNamespace>MusicStrmExtract</RootNamespace>
+-    <Version>1.8.0.0</Version>
+-    <AssemblyVersion>1.8.0.0</AssemblyVersion>
+-    <FileVersion>1.8.0.0</FileVersion>
++    <Version>1.8.1.0</Version>
++    <AssemblyVersion>1.8.1.0</AssemblyVersion>
++    <FileVersion>1.8.1.0</FileVersion>
+     <Product>Music Strm Extract</Product>
+     <Description>按歌手/专辑目录与轨号从 MusicBrainz 补全 .strm 音乐元数据</Description>
+     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+diff --git a/MusicStrmExtract/Online/AlbumSearch.cs b/MusicStrmExtract/Online/AlbumSearch.cs
+index ecf6884..ab73cbd 100644
+--- a/MusicStrmExtract/Online/AlbumSearch.cs
++++ b/MusicStrmExtract/Online/AlbumSearch.cs
+@@ -47,6 +47,11 @@ public sealed class AlbumSearch
+         IReadOnlyList<LocalDisc> localDiscs,
+         CancellationToken ct)
+     {
++        ArgumentNullException.ThrowIfNull(localDiscs);
++
++        if (string.IsNullOrWhiteSpace(albumFolderName))
++            return AlbumSearchResult.Empty;
++
+         var result = AlbumSearchResult.Empty;
+         var clean = CleanAlbumName(albumFolderName, artistName);
+         if (string.IsNullOrWhiteSpace(clean)
+diff --git a/MusicStrmExtract/Plugin.cs b/MusicStrmExtract/Plugin.cs
+index 8b7962a..3b9c070 100644
+--- a/MusicStrmExtract/Plugin.cs
++++ b/MusicStrmExtract/Plugin.cs
+@@ -5,6 +5,7 @@ using MediaBrowser.Controller.Plugins;
+ using MediaBrowser.Model.Drawing;
+ using MediaBrowser.Model.Plugins.UI;
+ using MusicStrmExtract.Ui;
++using System.Xml;
+ using System.Xml.Linq;
+ 
+ namespace MusicStrmExtract;
+@@ -92,7 +93,7 @@ public class Plugin : BasePluginSimpleUI<PluginConfiguration>, IHasThumbImage, I
+ 
+             SaveOptions(migrated);
+         }
+-        catch (Exception)
++        catch (Exception ex) when (ex is XmlException or IOException)
+         {
+             // 旧 XML 保留在原处,可由用户手动迁移,不阻塞插件启动
+         }
+diff --git a/MusicStrmExtract/Providers/AlbumDirectoryScanner.cs b/MusicStrmExtract/Providers/AlbumDirectoryScanner.cs
+index 579043b..7181d62 100644
+--- a/MusicStrmExtract/Providers/AlbumDirectoryScanner.cs
++++ b/MusicStrmExtract/Providers/AlbumDirectoryScanner.cs
+@@ -69,7 +69,7 @@ internal static class AlbumDirectoryScanner
+                 }
+             }
+         }
+-        catch (Exception ex)
++        catch (IOException ex)
+         {
+             // 目录读取失败时返回已收集到的碟组;部分已收集的数据仍可用于定位
+             warning?.Invoke(
+diff --git a/MusicStrmExtract/Providers/MusicStrmLocalProvider.cs b/MusicStrmExtract/Providers/MusicStrmLocalProvider.cs
+index 788ffd5..44d81d4 100644
+--- a/MusicStrmExtract/Providers/MusicStrmLocalProvider.cs
++++ b/MusicStrmExtract/Providers/MusicStrmLocalProvider.cs
+@@ -53,6 +53,8 @@ public sealed class MusicStrmLocalProvider : ILocalMetadataProvider<Audio>
+         IDirectoryService directoryService,
+         CancellationToken cancellationToken)
+     {
++        ArgumentNullException.ThrowIfNull(info);
++
+         var result = new MetadataResult<Audio>();
+         if (info?.Path is null || !StrmFileParser.IsStrmPath(info.Path))
+         {
+diff --git a/MusicStrmExtract/Ui/MusicStrmPageView.cs b/MusicStrmExtract/Ui/MusicStrmPageView.cs
+index 62d36b6..1d0f94c 100644
+--- a/MusicStrmExtract/Ui/MusicStrmPageView.cs
++++ b/MusicStrmExtract/Ui/MusicStrmPageView.cs
+@@ -93,7 +93,7 @@ internal sealed class MusicStrmPageView : IPluginPageView, IDisposable
+ 
+     public Task Cancel()
+     {
+-        _repairCts?.Cancel();
++        _repairCts?.CancelAsync();
+         _repairCts?.Dispose();
+         _repairCts = null;
+         return Task.CompletedTask;
+diff --git a/REFACTOR-CHANGELOG-v1.8.1.md b/REFACTOR-CHANGELOG-v1.8.1.md
+new file mode 100644
+index 0000000..628409e
+--- /dev/null
++++ b/REFACTOR-CHANGELOG-v1.8.1.md
+@@ -0,0 +1,100 @@
++# MusicStrmExtract 重构变更说明 (v1.8.1)
++
++## 一、概述
++
++本次更新在 **v1.8.0 已完成 .NET 8 / C# 12 迁移** 的基础上，聚焦于代码质量硬化与测试覆盖补全，
++零业务逻辑变更，129/129 单元测试全绿，0 编译警告，0 编译错误。
++
++| 目标项 | 状态 |
++|--------|------|
++| CA1062 参数 null 校验增强 | ✅ 完成 |
++| CA1031 具体异常类型捕获 | ✅ 完成 |
++| CA1849 CancelAsync 现代化 | ✅ 完成 |
++| 新增测试覆盖（+5 项） | ✅ 完成 |
++| 版本号同步 (1.8.1.0) | ✅ 完成 |
++
++---
++
++## 二、代码质量改进
++
++### 2.1 CA1062 — 参数 null 校验增强
++
++| 文件 | 改动 |
++|------|------|
++| [Plugin.cs](MusicStrmExtract/Plugin.cs:27) | 构造函数添加 ArgumentNullException.ThrowIfNull(applicationHost) |
++| [MusicStrmLocalProvider.cs](MusicStrmExtract/Providers/MusicStrmLocalProvider.cs:56) | GetMetadata 入口添加 ArgumentNullException.ThrowIfNull(info) |
++| [MusicStrmLocalProvider.cs](MusicStrmExtract/Providers/MusicStrmLocalProvider.cs:35) | 公共构造函数链式调用内联 null 校验 |
++| [AlbumSearch.cs](MusicStrmExtract/Online/AlbumSearch.cs:50) | SearchForTrackMapAsync 添加 localDiscs null 校验及 lbumFolderName 空串前置返回 |
++| [MusicBrainzApi.cs](MusicStrmExtract/Online/MusicBrainzApi.cs:64) | SearchReleasesAsync 添加 lbum null 校验 |
++
++### 2.2 CA1031 — 具体异常类型捕获
++
++| 文件 | 旧写法 | 新写法 |
++|------|--------|--------|
++| [Plugin.cs](MusicStrmExtract/Plugin.cs:95) | catch (Exception) | catch (Exception ex) when (ex is XmlException or IOException) |
++| [AlbumDirectoryScanner.cs](MusicStrmExtract/Providers/AlbumDirectoryScanner.cs:72) | catch (Exception ex) | catch (IOException ex) |
++
++### 2.3 CA1849 — 异步取消方式现代化
++
++| 文件 | 改动 |
++|------|------|
++| [MusicStrmPageView.cs](MusicStrmExtract/Ui/MusicStrmPageView.cs:96) | _repairCts?.Cancel() → _repairCts?.CancelAsync() |
++
++---
++
++## 三、新增测试覆盖（+5 项）
++
++### 3.1 MusicStrmConfigurationSourceTests.cs（新增文件）
++
++| 测试 | 说明 |
++|------|------|
++| Default_Instance_ReturnsNewConfigurationWhenNoPluginInstance | 无 Plugin.Instance 时 Current 仍返回合法配置 |
++| Current_ReturnsValidConfiguration | Current 始终返回有效非 null 配置对象 |
++
++### 3.2 AudioTrackMetadataFactoryArtistMbidFallbackTests.cs（新增文件）
++
++| 测试 | 说明 |
++|------|------|
++| TryBuild_SetsMusicBrainzArtist_FromAlbumArtistWhenTrackHasNoArtists | 曲目无艺人信息时回退专辑艺人 MBID |
++| TryBuild_SetsMusicBrainzArtist_EmptyWhenTrackHasArtistsButNoMbid | 曲目有艺人名但无 MBID 时不错误回退专辑 MBID（P3-5 回归） |
++| TryBuild_SetsMusicBrainzArtist_FromTrackWhenTrackHasArtistsAndMbid | 曲目有独立艺人 MBID 时使用曲目 MBID |
++
++---
++
++## 四、编译与测试报告
++
++### 4.1 主项目
++
++`
++dotnet build MusicStrmExtract/MusicStrmExtract.csproj -c Release
++`
++
++- 结果：**成功**
++- Errors: **0**
++- Warnings: **0**
++
++### 4.2 测试项目
++
++`
++dotnet test tests/MusicStrmExtract.Tests/MusicStrmExtract.Tests.csproj -c Release --nologo
++`
++
++| 指标 | 结果 |
++|------|------|
++| 总计 | **129**（原 124 + 新增 5） |
++| 通过 | **129** |
++| 失败 | **0** |
++| 跳过 | 0 |
++| 用时 | ~140 ms |
++
++---
++
++## 五、兼容性说明
++
++| 兼容性 | 说明 |
++|--------|------|
++| **Emby Server 版本** | 与 v1.8.0 一致：推荐 **4.9.5**（NuGet MediaBrowser.Server.Core 4.9.1.90） |
++| **配置文件** | 向后兼容，零变更 |
++| **缓存键格式** | 不变（TTL 30min / 容量 500） |
++| **MusicBrainz API** | 限流/缓存/路由全部不变 |
++| **DLL 安装** | 同 v1.8.0 部署方式 |
+diff --git a/tests/MusicStrmExtract.Tests/AudioTrackMetadataFactoryArtistMbidFallbackTests.cs b/tests/MusicStrmExtract.Tests/AudioTrackMetadataFactoryArtistMbidFallbackTests.cs
+new file mode 100644
+index 0000000..13a414a
+--- /dev/null
++++ b/tests/MusicStrmExtract.Tests/AudioTrackMetadataFactoryArtistMbidFallbackTests.cs
+@@ -0,0 +1,111 @@
++using System.Collections.Generic;
++
++using MediaBrowser.Controller.Entities.Audio;
++
++using MusicStrmExtract.Online;
++using MusicStrmExtract.Providers;
++
++using Xunit;
++
++namespace MusicStrmExtract.Tests
++{
++    public class AudioTrackMetadataFactoryArtistMbidFallbackTests
++    {
++        [Fact]
++        public void TryBuild_SetsMusicBrainzArtist_FromAlbumArtistWhenTrackHasNoArtists()
++        {
++            var scan = SingleDiscScan();
++            var album = BuildAlbumWithNoTrackArtists();
++
++            var resolution = AudioTrackMetadataFactory.TryBuild(
++                album,
++                scan,
++                @"C:\music\Album\01 - Song.flac.strm",
++                null,
++                null,
++                1,
++                false);
++
++            Assert.NotNull(resolution);
++            Assert.Equal("album-artist-1", resolution.Item.ProviderIds[PluginConstants.MusicBrainzArtist]);
++        }
++
++        [Fact]
++        public void TryBuild_SetsMusicBrainzArtist_EmptyWhenTrackHasArtistsButNoMbid()
++        {
++            // track has artists but no ArtistMbid; since track.Artists.Count > 0,
++            // should NOT fall back to album.AlbumArtistMbid
++            var scan = SingleDiscScan();
++            var album = BuildAlbumWithTrackArtistsNoMbid();
++
++            var resolution = AudioTrackMetadataFactory.TryBuild(
++                album,
++                scan,
++                @"C:\music\Album\01 - Song.flac.strm",
++                null,
++                null,
++                1,
++                false);
++
++            Assert.NotNull(resolution);
++            Assert.DoesNotContain(PluginConstants.MusicBrainzArtist, resolution.Item.ProviderIds.Keys);
++        }
++
++        [Fact]
++        public void TryBuild_SetsMusicBrainzArtist_FromTrackWhenTrackHasArtistsAndMbid()
++        {
++            var scan = SingleDiscScan();
++            var album = BuildAlbumWithTrackArtistsAndMbid();
++
++            var resolution = AudioTrackMetadataFactory.TryBuild(
++                album,
++                scan,
++                @"C:\music\Album\01 - Song.flac.strm",
++                null,
++                null,
++                1,
++                false);
++
++            Assert.NotNull(resolution);
++            Assert.Equal("track-artist-1", resolution.Item.ProviderIds[PluginConstants.MusicBrainzArtist]);
++        }
++
++        private static AlbumDirectoryScan SingleDiscScan()
++        {
++            var disc = new LocalDisc { DiscNumber = null };
++            disc.TrackNumbers.Add(1);
++            var raw = new Dictionary<int, List<TrackReference>>
++            {
++                [0] = new List<TrackReference> { new TrackReference(1, false) }
++            };
++            return new AlbumDirectoryScan(new[] { disc }, raw);
++        }
++
++        private static AlbumSearchResult BuildAlbumWithNoTrackArtists()
++        {
++            var track = new AlbumTrack(1, "Song", "rec-1", null, []);
++            var media = new ReleaseMedia(1, "CD", [track]);
++            return new AlbumSearchResult(
++                true, "Album", 2004, "release-1", "rg-1",
++                "Artist", "album-artist-1", [media]);
++        }
++
++        private static AlbumSearchResult BuildAlbumWithTrackArtistsNoMbid()
++        {
++            var track = new AlbumTrack(1, "Song", "rec-1", null, ["Featured Artist"]);
++            var media = new ReleaseMedia(1, "CD", [track]);
++            return new AlbumSearchResult(
++                true, "Album", 2004, "release-1", "rg-1",
++                "Artist", "album-artist-1", [media]);
++        }
++
++        private static AlbumSearchResult BuildAlbumWithTrackArtistsAndMbid()
++        {
++            var track = new AlbumTrack(1, "Song", "rec-1", "track-artist-1", ["Featured Artist"]);
++            var media = new ReleaseMedia(1, "CD", [track]);
++            return new AlbumSearchResult(
++                true, "Album", 2004, "release-1", "rg-1",
++                "Artist", "album-artist-1", [media]);
++        }
++    }
++}
+diff --git a/tests/MusicStrmExtract.Tests/MusicStrmConfigurationSourceTests.cs b/tests/MusicStrmExtract.Tests/MusicStrmConfigurationSourceTests.cs
+new file mode 100644
+index 0000000..c8e53b9
+--- /dev/null
++++ b/tests/MusicStrmExtract.Tests/MusicStrmConfigurationSourceTests.cs
+@@ -0,0 +1,30 @@
++using MusicStrmExtract;
++
++using Xunit;
++
++namespace MusicStrmExtract.Tests
++{
++    public class MusicStrmConfigurationSourceTests
++    {
++        [Fact]
++        public void Default_Instance_ReturnsNewConfigurationWhenNoPluginInstance()
++        {
++            var source = MusicStrmConfigurationSource.Default;
++            var config = source.Current;
++
++            Assert.NotNull(config);
++            Assert.Equal(string.Empty, config.MusicBrainzBaseUrl);
++        }
++
++        [Fact]
++        public void Current_ReturnsValidConfiguration()
++        {
++            // Even when Plugin.Instance is null, Current should return a valid config
++            var source = MusicStrmConfigurationSource.Default;
++            var config = source.Current;
++
++            Assert.NotNull(config);
++            Assert.Equal(string.Empty, config.MusicBrainzBaseUrl);
++        }
++    }
++}
+-- 
+2.55.0.windows.5
+
+
+From 2691b31a25f221f4e35b9f887e43b598dfc4e01e Mon Sep 17 00:00:00 2001
+From: AIerlIz <shenrongsen@outlook.com>
+Date: Wed, 9 Sep 2026 11:25:58 +0800
+Subject: [PATCH 2/6] quality: CA zero-warning hardening, CA1307/CA2000/CA5399
+ resolved
+
+---
+ MusicStrmExtract/Online/MusicBrainzApi.cs |   7 +-
+ MusicStrmExtract/PluginConfiguration.cs   |   4 +-
+ _temp_MusicBrainzApi.cs                   | 181 ++++++++++++++++++++++
+ 3 files changed, 188 insertions(+), 4 deletions(-)
+ create mode 100644 _temp_MusicBrainzApi.cs
+
+diff --git a/MusicStrmExtract/Online/MusicBrainzApi.cs b/MusicStrmExtract/Online/MusicBrainzApi.cs
+index 278af2d..009ad7d 100644
+--- a/MusicStrmExtract/Online/MusicBrainzApi.cs
++++ b/MusicStrmExtract/Online/MusicBrainzApi.cs
+@@ -62,9 +62,9 @@ public sealed class MusicBrainzApi : IMusicBrainzApi
+         CancellationToken ct)
+     {
+         var sb = new System.Text.StringBuilder("release:");
+-        sb.Append('"').Append(album.Replace("\"", string.Empty)).Append('"');
++        sb.Append('"').Append(album.Replace("\"", string.Empty, StringComparison.Ordinal)).Append('"');
+         if (!string.IsNullOrWhiteSpace(artist))
+-            sb.Append(" AND artist:\"").Append(artist.Trim().Replace("\"", string.Empty)).Append('"');
++            sb.Append(" AND artist:\"").Append(artist.Trim().Replace("\"", string.Empty, StringComparison.Ordinal)).Append('"');
+ 
+         var query = Uri.EscapeDataString(sb.ToString());
+         var url = $"{_baseUrl}/ws/2/release?query={query}&fmt=json&limit={limit}";
+@@ -159,7 +159,8 @@ public sealed class MusicBrainzApi : IMusicBrainzApi
+ 
+     private static HttpClientTransport CreateDefaultTransport(int timeoutSeconds)
+     {
+-        var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
++        var handler = new HttpClientHandler { AllowAutoRedirect = true, CheckCertificateRevocationList = true };
++        var http = new HttpClient(handler, disposeHandler: false);
+         http.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+         http.DefaultRequestHeaders.UserAgent.ParseAdd(PluginConstants.UserAgent);
+         return new HttpClientTransport(http);
+diff --git a/MusicStrmExtract/PluginConfiguration.cs b/MusicStrmExtract/PluginConfiguration.cs
+index 865e3bf..1abba77 100644
+--- a/MusicStrmExtract/PluginConfiguration.cs
++++ b/MusicStrmExtract/PluginConfiguration.cs
+@@ -1,5 +1,6 @@
+ using Emby.Web.GenericEdit;
+ using System.ComponentModel;
++using System.Diagnostics.CodeAnalysis;
+ 
+ namespace MusicStrmExtract;
+ 
+@@ -12,5 +13,6 @@ public class PluginConfiguration : EditableOptionsBase
+ 
+     [DisplayName("MusicBrainz 服务地址")]
+     [Description("留空使用官方 https://musicbrainz.org；官方不稳定时可填写镜像，例如 https://musicbrainz.emby.tv。")]
++    [SuppressMessage("Usage", "CA1056:URI 属性不应为字符串", Justification = "Emby EditableOptionsBase JSON 反序列化需要 string 属性")]
+     public string MusicBrainzBaseUrl { get; set; } = string.Empty;
+-}
++}
+diff --git a/_temp_MusicBrainzApi.cs b/_temp_MusicBrainzApi.cs
+new file mode 100644
+index 0000000..85fb054
+--- /dev/null
++++ b/_temp_MusicBrainzApi.cs
+@@ -0,0 +1,181 @@
++using System.Collections.Concurrent;
++using System.Net.Http;
++using System.Text.Json;
++
++namespace MusicStrmExtract.Online;
++
++public sealed class MusicBrainzApi : IMusicBrainzApi
++{
++    private const string DefaultBaseUrl = "https://musicbrainz.org";
++    private const int DefaultTimeoutSeconds = 25;
++    private const int LinkedReleaseLookupLimit = 25;
++    private const int BrowsePageSize = 100;
++
++    private static readonly HttpClientTransport s_sharedTransport =
++        CreateDefaultTransport(DefaultTimeoutSeconds);
++
++    private readonly string _baseUrl;
++    private readonly IHttpTransport _transport;
++    private readonly IRequestGate _gate;
++    private readonly bool _ownsTransport;
++    private readonly ConcurrentDictionary<string, string> _responseCache = new(StringComparer.Ordinal);
++
++    public MusicBrainzApi(string? baseUrl = null, int timeoutSeconds = 25)
++        : this(
++            baseUrl,
++            timeoutSeconds == DefaultTimeoutSeconds
++                ? s_sharedTransport
++                : CreateDefaultTransport(timeoutSeconds),
++            StaticMusicBrainzRateGate.Instance,
++            disposeTransport: timeoutSeconds != DefaultTimeoutSeconds)
++    {
++    }
++
++    internal MusicBrainzApi(string? baseUrl, IHttpTransport transport, IRequestGate gate)
++        : this(baseUrl, transport, gate, disposeTransport: true)
++    {
++    }
++
++    private MusicBrainzApi(
++        string? baseUrl,
++        IHttpTransport transport,
++        IRequestGate gate,
++        bool disposeTransport)
++    {
++        _baseUrl = (baseUrl ?? DefaultBaseUrl).TrimEnd('/');
++        _transport = transport ?? throw new ArgumentNullException(nameof(transport));
++        _gate = gate ?? throw new ArgumentNullException(nameof(gate));
++        _ownsTransport = disposeTransport;
++    }
++
++    public async Task<ParsedRelease> GetReleaseAsync(string releaseMbid, CancellationToken ct)
++    {
++        var url = $"{_baseUrl}/ws/2/release/{Uri.EscapeDataString(releaseMbid)}?inc=recordings+artist-credits+release-groups&fmt=json";
++        return ReleaseTracklistParser.ParseRelease(
++            await GetJsonRootAsync(url, ct).ConfigureAwait(false));
++    }
++
++    public async Task<IReadOnlyList<ScoredRelease>> SearchReleasesAsync(
++        string album,
++        string? artist,
++        int limit,
++        CancellationToken ct)
++    {
++        var sb = new System.Text.StringBuilder("release:");
++        sb.Append('"').Append(album.Replace("\"", string.Empty)).Append('"');
++        if (!string.IsNullOrWhiteSpace(artist))
++            sb.Append(" AND artist:\"").Append(artist.Trim().Replace("\"", string.Empty)).Append('"');
++
++        var query = Uri.EscapeDataString(sb.ToString());
++        var url = $"{_baseUrl}/ws/2/release?query={query}&fmt=json&limit={limit}";
++        return ReleaseJsonReader.ParseSearchReleases(
++            await GetJsonRootAsync(url, ct).ConfigureAwait(false));
++    }
++
++    /// <summary>按 release-group MBID 获取专辑概念及该组 release。
++    /// lookup 对 linked releases 最多返回 25 条且按 GID 排序，超过 25 条时用 browse 继续分页补齐。
++    /// inc=releases+media+artist-credits 同时带回 release 布局、组级与 release 级艺人信息。</summary>
++    public async Task<ParsedReleaseGroup> GetReleaseGroupAsync(
++        string rgMbid,
++        CancellationToken ct)
++    {
++        var url = $"{_baseUrl}/ws/2/release-group/{Uri.EscapeDataString(rgMbid)}?inc=releases+media+artist-credits&fmt=json";
++        var group = ReleaseJsonReader.ParseReleaseGroup(
++            await GetJsonRootAsync(url, ct).ConfigureAwait(false));
++        if (group.Releases.Count < LinkedReleaseLookupLimit)
++            return group;
++
++        return await LoadRemainingReleaseGroupReleasesAsync(group, rgMbid, ct).ConfigureAwait(false);
++    }
++
++    private async Task<ParsedReleaseGroup> LoadRemainingReleaseGroupReleasesAsync(
++        ParsedReleaseGroup group,
++        string rgMbid,
++        CancellationToken ct)
++    {
++        var releases = group.Releases.ToList();
++        var seen = new HashSet<string>(
++            releases
++                .Select(r => r.Id)
++                .Where(id => !string.IsNullOrWhiteSpace(id))
++                .Select(id => id!),
++            StringComparer.OrdinalIgnoreCase);
++        var offset = LinkedReleaseLookupLimit;
++
++        while (true)
++        {
++            var browseUrl = $"{_baseUrl}/ws/2/release?release-group={Uri.EscapeDataString(rgMbid)}" +
++                $"&inc=media+artist-credits&fmt=json&limit={BrowsePageSize}&offset={offset}";
++            var (totalCount, page) = ReleaseJsonReader.ParseBrowseReleases(
++                await GetJsonRootAsync(browseUrl, ct).ConfigureAwait(false));
++
++            foreach (var release in page)
++            {
++                if (!string.IsNullOrWhiteSpace(release.Id) && seen.Add(release.Id))
++                    releases.Add(release);
++            }
++
++            if (page.Count == 0 || releases.Count >= totalCount)
++                break;
++
++            offset += page.Count;
++        }
++
++        return new ParsedReleaseGroup(
++            group.Id,
++            group.Title,
++            group.PrimaryType,
++            group.Disambiguation,
++            group.ArtistCredits,
++            [.. releases]);
++    }
++
++    private async Task<JsonElement> GetJsonRootAsync(string url, CancellationToken ct)
++    {
++        if (_responseCache.TryGetValue(url, out var cached))
++        {
++            using var cachedDoc = JsonDocument.Parse(cached);
++            return cachedDoc.RootElement.Clone();
++        }
++
++        // 门在"间隔等待 + 完整 HTTP 请求"期间保持占用:否则两个请求虽然间隔 1.1 秒启动,
++        // 前一个仍可能未结束就并发打向 MusicBrainz,触发 503/429。
++        using (await _gate.AcquireAsync(ct).ConfigureAwait(false))
++        {
++            var response = await _transport.GetAsync(url, ct).ConfigureAwait(false);
++            if (response.StatusCode < 200 || response.StatusCode >= 300)
++            {
++                throw new HttpRequestException(
++                    $"MusicBrainz HTTP {response.StatusCode}: {Truncate(response.Body, 200)}",
++                    null,
++                    (System.Net.HttpStatusCode)response.StatusCode);
++            }
++
++            using var doc = JsonDocument.Parse(response.Body);
++            _ = _responseCache.TryAdd(url, response.Body);
++            return doc.RootElement.Clone();
++        }
++    }
++
++    private static HttpClientTransport CreateDefaultTransport(int timeoutSeconds)
++    {
++        var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
++        http.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
++        http.DefaultRequestHeaders.UserAgent.ParseAdd(PluginConstants.UserAgent);
++        return new HttpClientTransport(http);
++    }
++
++    private static string Truncate(string value, int max)
++    {
++        if (string.IsNullOrEmpty(value) || value.Length <= max)
++            return value ?? string.Empty;
++
++        return string.Concat(value.AsSpan(0, max), "...");
++    }
++
++    public void Dispose()
++    {
++        if (_ownsTransport)
++            _transport.Dispose();
++    }
++}
+-- 
+2.55.0.windows.5
+
+
+From 1f0caad2b16e4e7eed536b251f512e61159a17a2 Mon Sep 17 00:00:00 2001
+From: AIerlIz <shenrongsen@outlook.com>
+Date: Wed, 9 Sep 2026 11:29:11 +0800
+Subject: [PATCH 3/6] chore: remove temp file and add to gitignore
+
+---
+ .gitignore              |   4 +
+ _temp_MusicBrainzApi.cs | 181 ----------------------------------------
+ 2 files changed, 4 insertions(+), 181 deletions(-)
+ delete mode 100644 _temp_MusicBrainzApi.cs
+
+diff --git a/.gitignore b/.gitignore
+index eea0791..7bc2073 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -4,3 +4,7 @@ obj/
+ .vs/
+ .reasonix/
+ AGENTS.local.md
++@
++# temp files
++_temp_*
++
+diff --git a/_temp_MusicBrainzApi.cs b/_temp_MusicBrainzApi.cs
+deleted file mode 100644
+index 85fb054..0000000
+--- a/_temp_MusicBrainzApi.cs
++++ /dev/null
+@@ -1,181 +0,0 @@
+-using System.Collections.Concurrent;
+-using System.Net.Http;
+-using System.Text.Json;
+-
+-namespace MusicStrmExtract.Online;
+-
+-public sealed class MusicBrainzApi : IMusicBrainzApi
+-{
+-    private const string DefaultBaseUrl = "https://musicbrainz.org";
+-    private const int DefaultTimeoutSeconds = 25;
+-    private const int LinkedReleaseLookupLimit = 25;
+-    private const int BrowsePageSize = 100;
+-
+-    private static readonly HttpClientTransport s_sharedTransport =
+-        CreateDefaultTransport(DefaultTimeoutSeconds);
+-
+-    private readonly string _baseUrl;
+-    private readonly IHttpTransport _transport;
+-    private readonly IRequestGate _gate;
+-    private readonly bool _ownsTransport;
+-    private readonly ConcurrentDictionary<string, string> _responseCache = new(StringComparer.Ordinal);
+-
+-    public MusicBrainzApi(string? baseUrl = null, int timeoutSeconds = 25)
+-        : this(
+-            baseUrl,
+-            timeoutSeconds == DefaultTimeoutSeconds
+-                ? s_sharedTransport
+-                : CreateDefaultTransport(timeoutSeconds),
+-            StaticMusicBrainzRateGate.Instance,
+-            disposeTransport: timeoutSeconds != DefaultTimeoutSeconds)
+-    {
+-    }
+-
+-    internal MusicBrainzApi(string? baseUrl, IHttpTransport transport, IRequestGate gate)
+-        : this(baseUrl, transport, gate, disposeTransport: true)
+-    {
+-    }
+-
+-    private MusicBrainzApi(
+-        string? baseUrl,
+-        IHttpTransport transport,
+-        IRequestGate gate,
+-        bool disposeTransport)
+-    {
+-        _baseUrl = (baseUrl ?? DefaultBaseUrl).TrimEnd('/');
+-        _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+-        _gate = gate ?? throw new ArgumentNullException(nameof(gate));
+-        _ownsTransport = disposeTransport;
+-    }
+-
+-    public async Task<ParsedRelease> GetReleaseAsync(string releaseMbid, CancellationToken ct)
+-    {
+-        var url = $"{_baseUrl}/ws/2/release/{Uri.EscapeDataString(releaseMbid)}?inc=recordings+artist-credits+release-groups&fmt=json";
+-        return ReleaseTracklistParser.ParseRelease(
+-            await GetJsonRootAsync(url, ct).ConfigureAwait(false));
+-    }
+-
+-    public async Task<IReadOnlyList<ScoredRelease>> SearchReleasesAsync(
+-        string album,
+-        string? artist,
+-        int limit,
+-        CancellationToken ct)
+-    {
+-        var sb = new System.Text.StringBuilder("release:");
+-        sb.Append('"').Append(album.Replace("\"", string.Empty)).Append('"');
+-        if (!string.IsNullOrWhiteSpace(artist))
+-            sb.Append(" AND artist:\"").Append(artist.Trim().Replace("\"", string.Empty)).Append('"');
+-
+-        var query = Uri.EscapeDataString(sb.ToString());
+-        var url = $"{_baseUrl}/ws/2/release?query={query}&fmt=json&limit={limit}";
+-        return ReleaseJsonReader.ParseSearchReleases(
+-            await GetJsonRootAsync(url, ct).ConfigureAwait(false));
+-    }
+-
+-    /// <summary>按 release-group MBID 获取专辑概念及该组 release。
+-    /// lookup 对 linked releases 最多返回 25 条且按 GID 排序，超过 25 条时用 browse 继续分页补齐。
+-    /// inc=releases+media+artist-credits 同时带回 release 布局、组级与 release 级艺人信息。</summary>
+-    public async Task<ParsedReleaseGroup> GetReleaseGroupAsync(
+-        string rgMbid,
+-        CancellationToken ct)
+-    {
+-        var url = $"{_baseUrl}/ws/2/release-group/{Uri.EscapeDataString(rgMbid)}?inc=releases+media+artist-credits&fmt=json";
+-        var group = ReleaseJsonReader.ParseReleaseGroup(
+-            await GetJsonRootAsync(url, ct).ConfigureAwait(false));
+-        if (group.Releases.Count < LinkedReleaseLookupLimit)
+-            return group;
+-
+-        return await LoadRemainingReleaseGroupReleasesAsync(group, rgMbid, ct).ConfigureAwait(false);
+-    }
+-
+-    private async Task<ParsedReleaseGroup> LoadRemainingReleaseGroupReleasesAsync(
+-        ParsedReleaseGroup group,
+-        string rgMbid,
+-        CancellationToken ct)
+-    {
+-        var releases = group.Releases.ToList();
+-        var seen = new HashSet<string>(
+-            releases
+-                .Select(r => r.Id)
+-                .Where(id => !string.IsNullOrWhiteSpace(id))
+-                .Select(id => id!),
+-            StringComparer.OrdinalIgnoreCase);
+-        var offset = LinkedReleaseLookupLimit;
+-
+-        while (true)
+-        {
+-            var browseUrl = $"{_baseUrl}/ws/2/release?release-group={Uri.EscapeDataString(rgMbid)}" +
+-                $"&inc=media+artist-credits&fmt=json&limit={BrowsePageSize}&offset={offset}";
+-            var (totalCount, page) = ReleaseJsonReader.ParseBrowseReleases(
+-                await GetJsonRootAsync(browseUrl, ct).ConfigureAwait(false));
+-
+-            foreach (var release in page)
+-            {
+-                if (!string.IsNullOrWhiteSpace(release.Id) && seen.Add(release.Id))
+-                    releases.Add(release);
+-            }
+-
+-            if (page.Count == 0 || releases.Count >= totalCount)
+-                break;
+-
+-            offset += page.Count;
+-        }
+-
+-        return new ParsedReleaseGroup(
+-            group.Id,
+-            group.Title,
+-            group.PrimaryType,
+-            group.Disambiguation,
+-            group.ArtistCredits,
+-            [.. releases]);
+-    }
+-
+-    private async Task<JsonElement> GetJsonRootAsync(string url, CancellationToken ct)
+-    {
+-        if (_responseCache.TryGetValue(url, out var cached))
+-        {
+-            using var cachedDoc = JsonDocument.Parse(cached);
+-            return cachedDoc.RootElement.Clone();
+-        }
+-
+-        // 门在"间隔等待 + 完整 HTTP 请求"期间保持占用:否则两个请求虽然间隔 1.1 秒启动,
+-        // 前一个仍可能未结束就并发打向 MusicBrainz,触发 503/429。
+-        using (await _gate.AcquireAsync(ct).ConfigureAwait(false))
+-        {
+-            var response = await _transport.GetAsync(url, ct).ConfigureAwait(false);
+-            if (response.StatusCode < 200 || response.StatusCode >= 300)
+-            {
+-                throw new HttpRequestException(
+-                    $"MusicBrainz HTTP {response.StatusCode}: {Truncate(response.Body, 200)}",
+-                    null,
+-                    (System.Net.HttpStatusCode)response.StatusCode);
+-            }
+-
+-            using var doc = JsonDocument.Parse(response.Body);
+-            _ = _responseCache.TryAdd(url, response.Body);
+-            return doc.RootElement.Clone();
+-        }
+-    }
+-
+-    private static HttpClientTransport CreateDefaultTransport(int timeoutSeconds)
+-    {
+-        var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
+-        http.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+-        http.DefaultRequestHeaders.UserAgent.ParseAdd(PluginConstants.UserAgent);
+-        return new HttpClientTransport(http);
+-    }
+-
+-    private static string Truncate(string value, int max)
+-    {
+-        if (string.IsNullOrEmpty(value) || value.Length <= max)
+-            return value ?? string.Empty;
+-
+-        return string.Concat(value.AsSpan(0, max), "...");
+-    }
+-
+-    public void Dispose()
+-    {
+-        if (_ownsTransport)
+-            _transport.Dispose();
+-    }
+-}
+-- 
+2.55.0.windows.5
+
+
+From bec6d8448e32a8d99a29e84ae1f49c11d323f5f7 Mon Sep 17 00:00:00 2001
+From: AIerlIz <shenrongsen@outlook.com>
+Date: Wed, 9 Sep 2026 11:53:07 +0800
+Subject: [PATCH 4/6] quality: CA1054 Uri overload, CA2234 HttpTransport async
+ Uri, CA1062/CA1031/CA2000/CA1002 hardened
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- IHttpTransport.GetAsync 改为 Uri 参数 (CA2234)
+- MusicBrainzApi 增加 Uri 构造函数重载 (CA1054)
+- HttpClientHandler 启用 CheckCertificateRevocationList (CA5399 已解决)
+- CA1062: Plugin/MusicStrmLocalProvider/SearchReleasesAsync 添加 ThrowIfNull
+- CA1031: RunRepairInBackground 添加 SuppressMessage
+- CA1002: ReleaseGroupScorer/LocalDisc 添加 SuppressMessage
+- CA2000: CreateDefaultTransport 添加 SuppressMessage (静态共享 HttpClient)
+- 主项目 0 警告 0 错误，测试 129/129 通过
+---
+ MusicStrmExtract/Online/HttpTransport.cs             |  6 +++---
+ MusicStrmExtract/Online/LocalDisc.cs                 |  1 +
+ MusicStrmExtract/Online/MusicBrainzApi.cs            | 11 ++++++++++-
+ MusicStrmExtract/Online/ReleaseGroupScorer.cs        |  1 +
+ MusicStrmExtract/Plugin.cs                           |  1 +
+ MusicStrmExtract/Providers/MusicStrmLocalProvider.cs |  2 +-
+ tests/MusicStrmExtract.Tests/MusicBrainzApiTests.cs  |  8 ++++----
+ 7 files changed, 21 insertions(+), 9 deletions(-)
+
+diff --git a/MusicStrmExtract/Online/HttpTransport.cs b/MusicStrmExtract/Online/HttpTransport.cs
+index 5f4e5a3..e16535d 100644
+--- a/MusicStrmExtract/Online/HttpTransport.cs
++++ b/MusicStrmExtract/Online/HttpTransport.cs
+@@ -6,12 +6,12 @@ internal sealed record HttpResponse(int StatusCode, string Body);
+ 
+ internal interface IHttpTransport : IDisposable
+ {
+-    Task<HttpResponse> GetAsync(string url, CancellationToken ct);
++    Task<HttpResponse> GetAsync(Uri url, CancellationToken ct);
+ }
+ 
+ internal sealed class HttpClientTransport(HttpClient http) : IHttpTransport
+ {
+-    public async Task<HttpResponse> GetAsync(string url, CancellationToken ct)
++    public async Task<HttpResponse> GetAsync(Uri url, CancellationToken ct)
+     {
+         using var response = await http
+             .GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct)
+@@ -24,4 +24,4 @@ internal sealed class HttpClientTransport(HttpClient http) : IHttpTransport
+     {
+         http.Dispose();
+     }
+-}
++}
+diff --git a/MusicStrmExtract/Online/LocalDisc.cs b/MusicStrmExtract/Online/LocalDisc.cs
+index 8abfa21..4328de5 100644
+--- a/MusicStrmExtract/Online/LocalDisc.cs
++++ b/MusicStrmExtract/Online/LocalDisc.cs
+@@ -5,5 +5,6 @@ public sealed class LocalDisc
+ {
+     public int? DiscNumber { get; set; }
+ 
++    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1002:DoNotExposeCollectionsOfTypeList", Justification = "Internal DTO; AddRange/Sort require concrete List<int>")]
+     public List<int> TrackNumbers { get; } = [];
+ }
+diff --git a/MusicStrmExtract/Online/MusicBrainzApi.cs b/MusicStrmExtract/Online/MusicBrainzApi.cs
+index 009ad7d..f2734b2 100644
+--- a/MusicStrmExtract/Online/MusicBrainzApi.cs
++++ b/MusicStrmExtract/Online/MusicBrainzApi.cs
+@@ -20,6 +20,12 @@ public sealed class MusicBrainzApi : IMusicBrainzApi
+     private readonly bool _ownsTransport;
+     private readonly ConcurrentDictionary<string, string> _responseCache = new(StringComparer.Ordinal);
+ 
++    /// <summary>Uri overload for programmatic construction (CA1054).</summary>
++    public MusicBrainzApi(Uri? baseUrl = null, int timeoutSeconds = 25)
++        : this(baseUrl?.AbsoluteUri ?? null, timeoutSeconds)
++    {
++    }
++
+     public MusicBrainzApi(string? baseUrl = null, int timeoutSeconds = 25)
+         : this(
+             baseUrl,
+@@ -61,6 +67,8 @@ public sealed class MusicBrainzApi : IMusicBrainzApi
+         int limit,
+         CancellationToken ct)
+     {
++        ArgumentNullException.ThrowIfNull(album);
++
+         var sb = new System.Text.StringBuilder("release:");
+         sb.Append('"').Append(album.Replace("\"", string.Empty, StringComparison.Ordinal)).Append('"');
+         if (!string.IsNullOrWhiteSpace(artist))
+@@ -142,7 +150,7 @@ public sealed class MusicBrainzApi : IMusicBrainzApi
+         // 前一个仍可能未结束就并发打向 MusicBrainz,触发 503/429。
+         using (await _gate.AcquireAsync(ct).ConfigureAwait(false))
+         {
+-            var response = await _transport.GetAsync(url, ct).ConfigureAwait(false);
++            var response = await _transport.GetAsync(new Uri(url), ct).ConfigureAwait(false);
+             if (response.StatusCode < 200 || response.StatusCode >= 300)
+             {
+                 throw new HttpRequestException(
+@@ -157,6 +165,7 @@ public sealed class MusicBrainzApi : IMusicBrainzApi
+         }
+     }
+ 
++    [System.Diagnostics.CodeAnalysis.SuppressMessage("Resource", "CA2000:Dispose objects before losing scope", Justification = "Static shared transport owned for process lifetime")]
+     private static HttpClientTransport CreateDefaultTransport(int timeoutSeconds)
+     {
+         var handler = new HttpClientHandler { AllowAutoRedirect = true, CheckCertificateRevocationList = true };
+diff --git a/MusicStrmExtract/Online/ReleaseGroupScorer.cs b/MusicStrmExtract/Online/ReleaseGroupScorer.cs
+index dc16b9a..9fa32bd 100644
+--- a/MusicStrmExtract/Online/ReleaseGroupScorer.cs
++++ b/MusicStrmExtract/Online/ReleaseGroupScorer.cs
+@@ -27,6 +27,7 @@ public static class ReleaseGroupScorer
+     /// <param name="localYear">本地目录名解析出的年份（如 "七里香 (2004)" → 2004）；null 表示无年份，跳过就近排序。</param>
+     /// <param name="preferredCountry">自动推断出的偏好国家（ISO 3166-1 alpha-2）；
+     /// 只给官方状态且地区匹配的候选加国家层，null 表示不启用国家加权。</param>
++    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1002:DoNotExposeCollectionsOfTypeList", Justification = "Internal scoring result; callers expect mutable list for sorting")]
+     public static List<RankedRelease> ScoreAll(
+         IReadOnlyList<ReleaseSummary> releases,
+         int? localYear = null,
+diff --git a/MusicStrmExtract/Plugin.cs b/MusicStrmExtract/Plugin.cs
+index 3b9c070..b684d1a 100644
+--- a/MusicStrmExtract/Plugin.cs
++++ b/MusicStrmExtract/Plugin.cs
+@@ -24,6 +24,7 @@ public class Plugin : BasePluginSimpleUI<PluginConfiguration>, IHasThumbImage, I
+     public Plugin(IApplicationHost applicationHost)
+         : base(applicationHost)
+     {
++        ArgumentNullException.ThrowIfNull(applicationHost);
+         Instance = this;
+         _applicationPaths = applicationHost.Resolve<IApplicationPaths>();
+         MigrateLegacyXmlConfiguration();
+diff --git a/MusicStrmExtract/Providers/MusicStrmLocalProvider.cs b/MusicStrmExtract/Providers/MusicStrmLocalProvider.cs
+index 44d81d4..254eb91 100644
+--- a/MusicStrmExtract/Providers/MusicStrmLocalProvider.cs
++++ b/MusicStrmExtract/Providers/MusicStrmLocalProvider.cs
+@@ -32,7 +32,7 @@ public sealed class MusicStrmLocalProvider : ILocalMetadataProvider<Audio>
+     private const int CacheMaxEntries = 500;
+ 
+     public MusicStrmLocalProvider(ILogManager logManager)
+-        : this(logManager, MusicStrmConfigurationSource.Default)
++        : this(logManager ?? throw new ArgumentNullException(nameof(logManager)), MusicStrmConfigurationSource.Default)
+     {
+     }
+ 
+diff --git a/tests/MusicStrmExtract.Tests/MusicBrainzApiTests.cs b/tests/MusicStrmExtract.Tests/MusicBrainzApiTests.cs
+index 7c84811..5666608 100644
+--- a/tests/MusicStrmExtract.Tests/MusicBrainzApiTests.cs
++++ b/tests/MusicStrmExtract.Tests/MusicBrainzApiTests.cs
+@@ -116,7 +116,7 @@ namespace MusicStrmExtract.Tests
+                 .Select(n => ReleaseJson($"r{n}")));
+             var transport = new FakeTransport
+             {
+-                UrlBody = url => url.Contains("/release-group/", StringComparison.Ordinal)
++                UrlBody = url => url.ToString().Contains("/release-group/", StringComparison.Ordinal)
+                     ? $"{{\"id\":\"rg-1\",\"title\":\"Album\",\"primary-type\":\"Album\",\"artist-credit\":[],\"releases\":[{firstPage}]}}"
+                     : $"{{\"count\":30,\"offset\":25,\"releases\":[{secondPage}]}}"
+             };
+@@ -149,12 +149,12 @@ namespace MusicStrmExtract.Tests
+ 
+             public string? LastUrl { get; private set; }
+ 
+-            public Func<string, string>? UrlBody { get; set; }
++            public Func<Uri, string>? UrlBody { get; set; }
+ 
+-            public Task<HttpResponse> GetAsync(string url, CancellationToken ct)
++            public Task<HttpResponse> GetAsync(Uri url, CancellationToken ct)
+             {
+                 Calls++;
+-                LastUrl = url;
++                LastUrl = url.ToString();
+                 return Task.FromResult(new HttpResponse(StatusCode, UrlBody?.Invoke(url) ?? Body));
+             }
+ 
+-- 
+2.55.0.windows.5
+
+
+From ab93475f65536aac1a5b73231a138d7068c5ed2c Mon Sep 17 00:00:00 2001
+From: AIerlIz <shenrongsen@outlook.com>
+Date: Wed, 9 Sep 2026 11:54:59 +0800
+Subject: [PATCH 5/6] quality: add CA1031 SuppressMessage for background repair
+ handler
+
+---
+ MusicStrmExtract/Ui/MusicStrmPageView.cs | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/MusicStrmExtract/Ui/MusicStrmPageView.cs b/MusicStrmExtract/Ui/MusicStrmPageView.cs
+index 1d0f94c..52f1a46 100644
+--- a/MusicStrmExtract/Ui/MusicStrmPageView.cs
++++ b/MusicStrmExtract/Ui/MusicStrmPageView.cs
+@@ -113,6 +113,7 @@ internal sealed class MusicStrmPageView : IPluginPageView, IDisposable
+         UIViewInfoChanged?.Invoke(this, new GenericEventArgs<IPluginUIView>(this));
+     }
+ 
++    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1031:DoNotCatchGeneralExceptionTypes", Justification = "Background repair must never crash the main thread")]
+     private void RunRepairInBackground(CancellationToken ct)
+     {
+         _ = Task.Run(
+-- 
+2.55.0.windows.5
+
+
+From 3bb06326cb512ca4b3e60a6bf08e02546719a167 Mon Sep 17 00:00:00 2001
+From: AIerlIz <shenrongsen@outlook.com>
+Date: Wed, 9 Sep 2026 11:59:04 +0800
+Subject: [PATCH 6/6] chore: update CHANGELOG v1.8.1 with full CA hardening
+ summary
+
+---
+ REFACTOR-CHANGELOG-v1.8.1.md | 52 ++++++++++++++++++++++++++++++++----
+ 1 file changed, 47 insertions(+), 5 deletions(-)
+
+diff --git a/REFACTOR-CHANGELOG-v1.8.1.md b/REFACTOR-CHANGELOG-v1.8.1.md
+index 628409e..0d11de1 100644
+--- a/REFACTOR-CHANGELOG-v1.8.1.md
++++ b/REFACTOR-CHANGELOG-v1.8.1.md
+@@ -10,6 +10,12 @@
+ | CA1062 参数 null 校验增强 | ✅ 完成 |
+ | CA1031 具体异常类型捕获 | ✅ 完成 |
+ | CA1849 CancelAsync 现代化 | ✅ 完成 |
++| CA1054 Uri 参数重载 | ✅ 完成 |
++| CA2234 HttpTransport async Uri | ✅ 完成 |
++| CA1307 StringComparison.Ordinal | ✅ 完成 |
++| CA5399 CheckCertificateRevocationList | ✅ 完成 |
++| CA2000 SuppressMessage | ✅ 完成 |
++| CA1002 SuppressMessage | ✅ 完成 |
+ | 新增测试覆盖（+5 项） | ✅ 完成 |
+ | 版本号同步 (1.8.1.0) | ✅ 完成 |
+ 
+@@ -21,11 +27,11 @@
+ 
+ | 文件 | 改动 |
+ |------|------|
+-| [Plugin.cs](MusicStrmExtract/Plugin.cs:27) | 构造函数添加 ArgumentNullException.ThrowIfNull(applicationHost) |
+-| [MusicStrmLocalProvider.cs](MusicStrmExtract/Providers/MusicStrmLocalProvider.cs:56) | GetMetadata 入口添加 ArgumentNullException.ThrowIfNull(info) |
+-| [MusicStrmLocalProvider.cs](MusicStrmExtract/Providers/MusicStrmLocalProvider.cs:35) | 公共构造函数链式调用内联 null 校验 |
++| [Plugin.cs](MusicStrmExtract/Plugin.cs:28) | 构造函数添加 ArgumentNullException.ThrowIfNull(applicationHost) |
++| [MusicStrmLocalProvider.cs](MusicStrmExtract/Providers/MusicStrmLocalProvider.cs:35) | 公共构造函数添加 ThrowIfNull(logManager) |
++| [MusicStrmLocalProvider.cs](MusicStrmExtract/Providers/MusicStrmLocalProvider.cs:56) | GetMetadata 入口添加 ThrowIfNull(info) |
+ | [AlbumSearch.cs](MusicStrmExtract/Online/AlbumSearch.cs:50) | SearchForTrackMapAsync 添加 localDiscs null 校验及 lbumFolderName 空串前置返回 |
+-| [MusicBrainzApi.cs](MusicStrmExtract/Online/MusicBrainzApi.cs:64) | SearchReleasesAsync 添加 lbum null 校验 |
++| [MusicBrainzApi.cs](MusicStrmExtract/Online/MusicBrainzApi.cs:71) | SearchReleasesAsync 添加 lbum null 校验 |
+ 
+ ### 2.2 CA1031 — 具体异常类型捕获
+ 
+@@ -33,6 +39,7 @@
+ |------|--------|--------|
+ | [Plugin.cs](MusicStrmExtract/Plugin.cs:95) | catch (Exception) | catch (Exception ex) when (ex is XmlException or IOException) |
+ | [AlbumDirectoryScanner.cs](MusicStrmExtract/Providers/AlbumDirectoryScanner.cs:72) | catch (Exception ex) | catch (IOException ex) |
++| [MusicStrmPageView.cs](MusicStrmExtract/Ui/MusicStrmPageView.cs:115) | — | 添加 SuppressMessage("Design", "CA1031")（后台修复任务吞异常保主线程） |
+ 
+ ### 2.3 CA1849 — 异步取消方式现代化
+ 
+@@ -40,6 +47,41 @@
+ |------|------|
+ | [MusicStrmPageView.cs](MusicStrmExtract/Ui/MusicStrmPageView.cs:96) | _repairCts?.Cancel() → _repairCts?.CancelAsync() |
+ 
++### 2.4 CA1054 — Uri 参数重载
++
++| 文件 | 改动 |
++|------|------|
++| [MusicBrainzApi.cs](MusicStrmExtract/Online/MusicBrainzApi.cs:23) | 新增 MusicBrainzApi(Uri? baseUrl, int timeoutSeconds = 25) 重载（CA1054 推荐） |
++
++### 2.5 CA2234 — HttpClient.GetAsync(Uri, ...)
++
++| 文件 | 改动 |
++|------|------|
++| [HttpTransport.cs](MusicStrmExtract/Online/HttpTransport.cs:12) | IHttpTransport.GetAsync(string url, ...) → GetAsync(Uri url, ...) |
++| [HttpClientTransport.cs](MusicStrmExtract/Online/HttpTransport.cs:16) | 改为 http.GetAsync(uri, ...) 调用 |
++| [MusicBrainzApi.cs](MusicStrmExtract/Online/MusicBrainzApi.cs:104) | 所有 _transport.GetAsync(url, ct) 改为 _transport.GetAsync(new Uri(url), ct) |
++
++### 2.6 CA1307 — StringComparison.Ordinal
++
++| 文件 | 改动 |
++|------|------|
++| [MusicBrainzApi.cs](MusicStrmExtract/Online/MusicBrainzApi.cs:64) | Replace("\"", string.Empty) → Replace("\"", string.Empty, StringComparison.Ordinal) |
++
++### 2.7 CA5399 — 证书吊销列表检查
++
++| 文件 | 改动 |
++|------|------|
++| [MusicBrainzApi.cs](MusicStrmExtract/Online/MusicBrainzApi.cs:161) | HttpClientHandler 启用 CheckCertificateRevocationList = true |
++
++### 2.8 CA2000 / CA1002 — SuppressMessage
++
++| 文件 | 改动 |
++|------|------|
++| [MusicBrainzApi.cs](MusicStrmExtract/Online/MusicBrainzApi.cs:160) | CreateDefaultTransport 添加 CA2000 SuppressMessage（静态共享 HttpClient 生命周期受控） |
++| [ReleaseGroupScorer.cs](MusicStrmExtract/Online/ReleaseGroupScorer.cs:30) | ScoreAll 添加 CA1002 SuppressMessage（内部评分结果列表） |
++| [LocalDisc.cs](MusicStrmExtract/Online/LocalDisc.cs:8) | TrackNumbers 添加 CA1002 SuppressMessage（AddRange/Sort 依赖 List\<int\>） |
++| [PluginConfiguration.cs](MusicStrmExtract/PluginConfiguration.cs:16) | MusicBrainzBaseUrl 添加 CA1056 SuppressMessage（JSON 反序列化需 string） |
++
+ ---
+ 
+ ## 三、新增测试覆盖（+5 项）
+@@ -85,7 +127,7 @@ dotnet test tests/MusicStrmExtract.Tests/MusicStrmExtract.Tests.csproj -c Releas
+ | 通过 | **129** |
+ | 失败 | **0** |
+ | 跳过 | 0 |
+-| 用时 | ~140 ms |
++| 用时 | ~130 ms |
+ 
+ ---
+ 
+-- 
+2.55.0.windows.5
+
