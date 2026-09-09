@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Net.Http;
 using System.Text.Json;
 
@@ -62,9 +62,9 @@ public sealed class MusicBrainzApi : IMusicBrainzApi
         CancellationToken ct)
     {
         var sb = new System.Text.StringBuilder("release:");
-        sb.Append('"').Append(album.Replace("\"", string.Empty)).Append('"');
+        sb.Append('"').Append(album.Replace("\"", string.Empty, StringComparison.Ordinal)).Append('"');
         if (!string.IsNullOrWhiteSpace(artist))
-            sb.Append(" AND artist:\"").Append(artist.Trim().Replace("\"", string.Empty)).Append('"');
+            sb.Append(" AND artist:\"").Append(artist.Trim().Replace("\"", string.Empty, StringComparison.Ordinal)).Append('"');
 
         var query = Uri.EscapeDataString(sb.ToString());
         var url = $"{_baseUrl}/ws/2/release?query={query}&fmt=json&limit={limit}";

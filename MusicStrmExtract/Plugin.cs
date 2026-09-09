@@ -5,7 +5,8 @@ using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Model.Drawing;
 using MediaBrowser.Model.Plugins.UI;
 using MusicStrmExtract.Ui;
-using System.Xml;\nusing System.Xml.Linq;
+using System.Xml;
+using System.Xml.Linq;
 
 namespace MusicStrmExtract;
 
