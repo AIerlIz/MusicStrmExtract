@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -15,7 +14,7 @@ namespace MusicStrmExtract.Online
     /// 用 release:"专辑" AND artist:"艺人" 查询候选 release 以反查 release-group(每个 release 只属于一个 RG),
     /// 再按本地碟组(碟号+轨号)校验组内各 release 的 media 布局,
     /// 返回命中 release 的完整轨道映射(每轨 recording MBID/标题)——单曲按碟号+轨号取数。
-    /// 目录名原样透传给 MusicBrainz,不参与本地文本比较;候选顺序稳定(Official 优先 → Album 主类型 → 完整日期优先 → score)。
+    /// 目录名原样透传给 MusicBrainz,不参与本地文本比较;候选顺序稳定(Official 优先 → Album 主类型 → 完整日期优先 → 偏好国家 → score)。
     /// </summary>
     public sealed class AlbumSearch
     {
@@ -32,39 +31,13 @@ namespace MusicStrmExtract.Online
         /// <summary>去除专辑名中的年份/附加括号等,得到核心名:"叶惠美 (2003)"→"叶惠美","七里香-2004"→"七里香"。</summary>
         public static string? CleanAlbumName(string? raw, string? artistName = null)
         {
-            if (string.IsNullOrWhiteSpace(raw))
-            {
-                return null;
-            }
-
-            var trimmed = raw.Trim();
-            // 同名专辑目录(如 "The 1975" 的艺人自名专辑)不应把标题年份当发行年份剥掉。
-            if (!string.IsNullOrWhiteSpace(artistName)
-                && string.Equals(trimmed, artistName.Trim(), StringComparison.OrdinalIgnoreCase))
-            {
-                return trimmed;
-            }
-
-            var s = trimmed;
-            s = Regex.Replace(s, @"[\s_\-\.]*[\(\[（【]?\s*(18|19|20)\d{2}\s*[\)\]）】]?\s*$", string.Empty);
-            s = Regex.Replace(s, @"[\s\-\._]+$", string.Empty);
-            return string.IsNullOrWhiteSpace(s) ? trimmed : s.Trim();
+            return AlbumFolderNameParser.Clean(raw, artistName);
         }
 
         /// <summary>目录名被清洗掉年份后缀时，解析该发行年份；同名自名专辑标题年份不算发行年份。</summary>
         internal static int? ParseFolderYear(string? albumFolderName, string? artistName)
         {
-            var trimmed = albumFolderName?.Trim();
-            var clean = CleanAlbumName(trimmed, artistName);
-            if (string.IsNullOrWhiteSpace(trimmed)
-                || string.IsNullOrWhiteSpace(clean)
-                || string.Equals(trimmed, clean, StringComparison.Ordinal))
-            {
-                return null;
-            }
-
-            var match = Regex.Match(trimmed, @"\b(1[89]\d{2}|20\d{2})\s*[\)\]）】]?\s*$");
-            return match.Success ? int.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) : (int?)null;
+            return AlbumFolderNameParser.ParseYear(albumFolderName, artistName);
         }
 
         /// <summary>
@@ -124,7 +97,7 @@ namespace MusicStrmExtract.Online
         /// <summary>
         /// 稳定排序:本地目录文本已作为查询条件交给 MB,不再做字形过滤;
         /// status(Official 0 < Promotional/Unknown 1 < Bootleg/Withdrawn 2 < Pseudo-Release 3) -> 主类型 Album -> 完整日期优先 -> 日期最早
-        /// (空日期排最后)-> score 降序 -> 官方名(字典序)
+        /// (空日期排最后)-> 偏好国家 -> score 降序 -> 官方名(字典序)
         /// </summary>
         private static List<ScoredRelease> OrderSearchCandidates(
             List<ScoredRelease> scored,
@@ -173,30 +146,22 @@ namespace MusicStrmExtract.Online
 
                 foreach (var rankedRelease in ranked)
                 {
-                    var release = rankedRelease.Release;
-                    if (string.IsNullOrWhiteSpace(release.Id))
+                    var match = await TryMatchCandidateAsync(
+                        state,
+                        rankedRelease.Release,
+                        localDiscs,
+                        ct).ConfigureAwait(false);
+                    if (match is null)
                     {
                         continue;
                     }
 
-                    var parsed = await _api.GetReleaseAsync(release.Id, ct).ConfigureAwait(false);
-                    if (parsed.Medias.Count == 0)
+                    if (match.IsExact)
                     {
-                        continue;
+                        return BuildAlbumResult(match.Release, match.Medias, rg);
                     }
 
-                    var mapping = ReleaseLayoutMatcher.MapLocalDiscsToMedias(localDiscs, parsed.Medias);
-                    if (mapping is null)
-                    {
-                        continue;
-                    }
-
-                    if (ReleaseLayoutMatcher.HasExactTrackCount(localDiscs, mapping, parsed.Medias))
-                    {
-                        return BuildAlbumResult(parsed.Release, parsed.Medias, rg);
-                    }
-
-                    SetFallback(state, rg, parsed.Release, parsed.Medias);
+                    SetFallback(state, rg, match.Release, match.Medias);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -225,38 +190,57 @@ namespace MusicStrmExtract.Online
         {
             foreach (var scoredRelease in ordered)
             {
-                var release = scoredRelease.Release;
-                if (string.IsNullOrWhiteSpace(release.Id))
+                var match = await TryMatchCandidateAsync(
+                    state,
+                    scoredRelease.Release,
+                    localDiscs,
+                    ct).ConfigureAwait(false);
+                if (match is null)
                 {
                     continue;
                 }
 
-                if (string.Equals(state.FirstFallbackMbid, release.Id, StringComparison.OrdinalIgnoreCase))
+                if (match.IsExact)
                 {
-                    continue;
+                    return BuildAlbumResult(match.Release, match.Medias, null);
                 }
 
-                var parsed = await _api.GetReleaseAsync(release.Id, ct).ConfigureAwait(false);
-                if (parsed.Medias.Count == 0)
-                {
-                    continue;
-                }
-
-                var mapping = ReleaseLayoutMatcher.MapLocalDiscsToMedias(localDiscs, parsed.Medias);
-                if (mapping is null)
-                {
-                    continue;
-                }
-
-                if (ReleaseLayoutMatcher.HasExactTrackCount(localDiscs, mapping, parsed.Medias))
-                {
-                    return BuildAlbumResult(parsed.Release, parsed.Medias, null);
-                }
-
-                SetFallback(state, null, parsed.Release, parsed.Medias);
+                SetFallback(state, null, match.Release, match.Medias);
             }
 
             return state.FirstFallback ?? AlbumSearchResult.Empty;
+        }
+
+        /// <summary>
+        /// 拉取一个 release 详情并做本地布局校验;同一 release 在一次搜索内只评估一次。
+        /// 返回 null 表示无可用 media 或布局不匹配;IsExact=false 时仍由调用方决定是否保留 fallback。
+        /// </summary>
+        private async Task<CandidateMatch?> TryMatchCandidateAsync(
+            SearchState state,
+            ReleaseSummary release,
+            IReadOnlyList<LocalDisc> localDiscs,
+            CancellationToken ct)
+        {
+            var releaseId = release.Id;
+            if (string.IsNullOrWhiteSpace(releaseId) || state.EvaluatedReleaseIds.Contains(releaseId))
+            {
+                return null;
+            }
+
+            var parsed = await _api.GetReleaseAsync(releaseId, ct).ConfigureAwait(false);
+            state.EvaluatedReleaseIds.Add(releaseId);
+            if (parsed.Medias.Count == 0)
+            {
+                return null;
+            }
+
+            var layout = ReleaseLayoutMatcher.TryMatch(localDiscs, parsed.Medias);
+            if (layout is null)
+            {
+                return null;
+            }
+
+            return new CandidateMatch(parsed.Release, parsed.Medias, layout.IsExact);
         }
 
         private static AlbumSearchResult BuildAlbumResult(
@@ -294,7 +278,6 @@ namespace MusicStrmExtract.Online
             }
 
             state.FirstFallback = BuildAlbumResult(release, medias, releaseGroup);
-            state.FirstFallbackMbid = release.Id;
         }
 
         private static bool IsIncompleteDate(string? date)
@@ -306,7 +289,13 @@ namespace MusicStrmExtract.Online
         {
             public AlbumSearchResult? FirstFallback { get; set; }
 
-            public string? FirstFallbackMbid { get; set; }
+            public HashSet<string> EvaluatedReleaseIds { get; } =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
+
+        private sealed record CandidateMatch(
+            ReleaseSummary Release,
+            IReadOnlyList<ReleaseMedia> Medias,
+            bool IsExact);
     }
 }

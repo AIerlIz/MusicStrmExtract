@@ -12,24 +12,45 @@ namespace MusicStrmExtract.Online
     public sealed class MusicBrainzApi : IMusicBrainzApi
     {
         private const string DefaultBaseUrl = "https://musicbrainz.org";
+        private const int DefaultTimeoutSeconds = 25;
         private const int LinkedReleaseLookupLimit = 25;
         private const int BrowsePageSize = 100;
+
+        private static readonly HttpClientTransport SharedTransport =
+            CreateDefaultTransport(DefaultTimeoutSeconds);
 
         private readonly string _baseUrl;
         private readonly IHttpTransport _transport;
         private readonly IRequestGate _gate;
+        private readonly bool _ownsTransport;
         private readonly ConcurrentDictionary<string, string> _responseCache = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
 
         public MusicBrainzApi(string? baseUrl = null, int timeoutSeconds = 25)
-            : this(baseUrl, CreateDefaultTransport(timeoutSeconds), StaticMusicBrainzRateGate.Instance)
+            : this(
+                baseUrl,
+                timeoutSeconds == DefaultTimeoutSeconds
+                    ? SharedTransport
+                    : CreateDefaultTransport(timeoutSeconds),
+                StaticMusicBrainzRateGate.Instance,
+                disposeTransport: timeoutSeconds != DefaultTimeoutSeconds)
         {
         }
 
         internal MusicBrainzApi(string? baseUrl, IHttpTransport transport, IRequestGate gate)
+            : this(baseUrl, transport, gate, disposeTransport: true)
+        {
+        }
+
+        private MusicBrainzApi(
+            string? baseUrl,
+            IHttpTransport transport,
+            IRequestGate gate,
+            bool disposeTransport)
         {
             _baseUrl = (baseUrl ?? DefaultBaseUrl).TrimEnd('/');
             _transport = transport ?? throw new ArgumentNullException(nameof(transport));
             _gate = gate ?? throw new ArgumentNullException(nameof(gate));
+            _ownsTransport = disposeTransport;
         }
 
         public async Task<ParsedRelease> GetReleaseAsync(string releaseMbid, CancellationToken ct)
@@ -167,7 +188,10 @@ namespace MusicStrmExtract.Online
 
         public void Dispose()
         {
-            _transport.Dispose();
+            if (_ownsTransport)
+            {
+                _transport.Dispose();
+            }
         }
     }
 }

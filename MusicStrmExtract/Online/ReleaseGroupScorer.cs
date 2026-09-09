@@ -50,65 +50,39 @@ namespace MusicStrmExtract.Online
                     BuildRank(release, localYear, preferredCountry)));
             }
 
-            if (localYear.HasValue)
-            {
-                result.Sort((a, b) =>
-                {
-                    var cmp = a.Rank.CompareTo(b.Rank);
-                    if (cmp != 0)
-                    {
-                        return cmp;
-                    }
-
-                    // 年份贴近相同(如 2004 vs 2006,本地 2005)时,日期更早者优先(首发原版胜出)
-                    cmp = string.Compare(
-                        a.Release.Date ?? "9999",
-                        b.Release.Date ?? "9999",
-                        StringComparison.Ordinal);
-                    if (cmp != 0)
-                    {
-                        return cmp;
-                    }
-
-                    cmp = b.Score.CompareTo(a.Score);
-                    return cmp != 0
-                        ? cmp
-                        : string.Compare(
-                            a.Release.Id ?? string.Empty,
-                            b.Release.Id ?? string.Empty,
-                            StringComparison.Ordinal);
-                });
-            }
-            else
-            {
-                result.Sort((a, b) =>
-                {
-                    var cmp = a.Rank.CompareTo(b.Rank);
-                    if (cmp != 0)
-                    {
-                        return cmp;
-                    }
-
-                    cmp = b.Score.CompareTo(a.Score);
-                    if (cmp != 0)
-                    {
-                        return cmp;
-                    }
-
-                    cmp = string.Compare(
-                        a.Release.Date ?? "9999",
-                        b.Release.Date ?? "9999",
-                        StringComparison.Ordinal);
-                    return cmp != 0
-                        ? cmp
-                        : string.Compare(
-                            a.Release.Id ?? string.Empty,
-                            b.Release.Id ?? string.Empty,
-                            StringComparison.Ordinal);
-                });
-            }
+            result.Sort((a, b) => CompareRanked(a, b, localYear.HasValue));
 
             return result;
+        }
+
+        private static int CompareRanked(
+            RankedRelease a,
+            RankedRelease b,
+            bool dateBeforeScore)
+        {
+            var cmp = a.Rank.CompareTo(b.Rank);
+            if (cmp != 0)
+            {
+                return cmp;
+            }
+
+            var scoreCmp = b.Score.CompareTo(a.Score);
+            var dateCmp = string.Compare(
+                a.Release.Date ?? "9999",
+                b.Release.Date ?? "9999",
+                StringComparison.Ordinal);
+
+            // 有本地年份时,同年份贴近层内先比日期(首发原版胜出),再比质量分;
+            // 无本地年份时保持同层质量分优先、日期只作稳定排序。
+            cmp = dateBeforeScore
+                ? (dateCmp != 0 ? dateCmp : scoreCmp)
+                : (scoreCmp != 0 ? scoreCmp : dateCmp);
+            return cmp != 0
+                ? cmp
+                : string.Compare(
+                    a.Release.Id ?? string.Empty,
+                    b.Release.Id ?? string.Empty,
+                    StringComparison.Ordinal);
         }
 
         /// <summary>

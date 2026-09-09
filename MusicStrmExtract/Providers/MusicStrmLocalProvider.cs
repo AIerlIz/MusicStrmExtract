@@ -1,7 +1,4 @@
 using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -133,84 +130,27 @@ namespace MusicStrmExtract.Providers
                 return false;
             }
 
-            var mapping = ReleaseLayoutMatcher.MapLocalDiscsToMedias(scan.Discs, album.Medias);
-            if (mapping is null)
-            {
-                return false;
-            }
-
-            var group = scan.Discs.FirstOrDefault(d => d.DiscNumber == (folderDisc ?? fileDisc));
-            if (group is null || !mapping.TryGetValue(group, out var media))
-            {
-                return false;
-            }
-
-            var rawRefs = scan.RawTracks.TryGetValue(group.DiscNumber ?? 0, out var refs)
-                ? refs
-                : new List<TrackReference>();
-            var selfNumber = StrmFileParser.MapCommentaryTrackNumber(
+            var resolution = AudioTrackMetadataFactory.TryBuild(
+                album,
+                scan,
+                info.Path,
+                folderDisc,
+                fileDisc,
                 rawTrackNumber,
-                isCommentary,
-                rawRefs.Where(r => r.IsCommentary).Select(r => r.Number).ToArray(),
-                rawRefs.Where(r => !r.IsCommentary).Select(r => r.Number).ToArray());
-            if (selfNumber <= 0)
+                isCommentary);
+            if (resolution is null)
             {
                 return false;
             }
 
-            var track = media.Tracks.FirstOrDefault(t => t.Number == selfNumber);
-            if (track is null)
-            {
-                return false;
-            }
-
-            // 命中:数据全部来自 MB 专辑 tracklist(recording MBID 真实无脏)
-            var albumArtists = !string.IsNullOrWhiteSpace(album.ArtistName)
-                ? new[] { album.ArtistName! }
-                : Array.Empty<string>();
-            var trackArtists = track.Artists.Count > 0 ? track.Artists.ToArray() : albumArtists;
-
-            var displayName = (track.Title ?? Path.GetFileNameWithoutExtension(info.Path)).Trim();
-            if (isCommentary)
-            {
-                displayName += " (Commentary)";
-            }
-
-            var item = new Audio
-            {
-                Name = displayName,
-                Album = album.Title,
-                ProductionYear = album.Year,
-                IndexNumber = track.Number,
-                ParentIndexNumber = group.DiscNumber is not null || scan.Discs.Count > 1 ? media.Position : (int?)null,
-                Artists = trackArtists,
-                AlbumArtists = albumArtists
-            };
-
-            SetProviderId(item, PluginConstants.MusicBrainzTrack, track.RecordingMbid);
-            SetProviderId(item, PluginConstants.MusicBrainzAlbum, album.ReleaseMbid);
-            // 曲目已有独立艺人信息时不能回退到专辑艺人 MBID，避免不同艺人被错误合并。
-            var artistMbid = track.Artists.Count == 0 ? album.AlbumArtistMbid : track.ArtistMbid;
-            SetProviderId(item, PluginConstants.MusicBrainzArtist, artistMbid);
-            SetProviderId(item, PluginConstants.MusicBrainzAlbumArtist, album.AlbumArtistMbid);
-            SetProviderId(item, PluginConstants.MusicBrainzReleaseGroup, album.ReleaseGroupMbid);
-
-            result.Item = item;
+            result.Item = resolution.Item;
             result.HasMetadata = true;
             ct.ThrowIfCancellationRequested();
 
-            _logger.Info($"[MusicStrmExtract] [LocalProvider] 专辑轨道定位: '{albumFolder}' 碟 {media.Position} 轨 {track.Number} '{track.Title}' recordingMBID={track.RecordingMbid}");
+            _logger.Info($"[MusicStrmExtract] [LocalProvider] 专辑轨道定位: '{albumFolder}' " +
+                $"碟 {resolution.Media.Position} 轨 {resolution.Track.Number} '{resolution.Track.Title}' " +
+                $"recordingMBID={resolution.Track.RecordingMbid}");
             return true;
-        }
-
-        private static void SetProviderId(Audio item, string key, string? value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return;
-            }
-
-            item.ProviderIds[key] = value.Trim();
         }
     }
 }

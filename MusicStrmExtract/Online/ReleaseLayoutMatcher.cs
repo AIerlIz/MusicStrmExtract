@@ -9,7 +9,8 @@ namespace MusicStrmExtract.Online
     {
         /// <summary>
         /// 把本地碟组映射到 release 的 media:
-        ///   带碟号的组按 media.Position 一一对应并校验轨号覆盖,失败即整张未命中;
+        ///   只映射音频 media(VCD/DVD 等视频 bonus 不参与),带碟号的组按 media.Position
+        ///   一一对应并校验轨号覆盖,失败即整张未命中;
         ///   无碟号的组在剩余 media 中取 Position 最小且覆盖轨号者(单碟保持原行为)。
         /// 任一碟组无法映射时返回 null,避免产生半对半错的专辑。
         /// </summary>
@@ -18,6 +19,14 @@ namespace MusicStrmExtract.Online
             IReadOnlyList<ReleaseMedia> medias)
         {
             if (localDiscs is null || localDiscs.Count == 0 || medias is null || medias.Count == 0)
+            {
+                return null;
+            }
+
+            var audioMedias = medias
+                .Where(m => !IsVideoMedia(m.Format))
+                .ToList();
+            if (audioMedias.Count == 0)
             {
                 return null;
             }
@@ -35,7 +44,7 @@ namespace MusicStrmExtract.Online
 
             foreach (var group in explicitGroups)
             {
-                var media = medias.FirstOrDefault(m => m.Position == group.DiscNumber!.Value);
+                var media = audioMedias.FirstOrDefault(m => m.Position == group.DiscNumber!.Value);
                 if (media is null || !usedPositions.Add(media.Position) || !Covers(media, group.TrackNumbers))
                 {
                     return null;
@@ -44,7 +53,7 @@ namespace MusicStrmExtract.Online
                 map.Add(group, media);
             }
 
-            var remaining = medias
+            var remaining = audioMedias
                 .Where(m => !usedPositions.Contains(m.Position))
                 .OrderBy(m => m.Position)
                 .ToList();
@@ -105,6 +114,25 @@ namespace MusicStrmExtract.Online
             return true;
         }
 
+        /// <summary>
+        /// 一次完成“本地碟组 → 音频 media”映射与轨数 exact 判定。
+        /// 返回 null 表示布局无法映射;非 null 时 Mapping 始终可用,IsExact 决定是否可提前选版。
+        /// </summary>
+        public static ReleaseLayoutMatch? TryMatch(
+            IReadOnlyList<LocalDisc> localDiscs,
+            IReadOnlyList<ReleaseMedia> medias)
+        {
+            var mapping = MapLocalDiscsToMedias(localDiscs, medias);
+            if (mapping is null)
+            {
+                return null;
+            }
+
+            return new ReleaseLayoutMatch(
+                mapping,
+                HasExactTrackCount(localDiscs, mapping, medias));
+        }
+
         private static bool Covers(ReleaseMedia media, IReadOnlyCollection<int> trackNumbers)
         {
             var mediaNumbers = media.Tracks
@@ -114,4 +142,9 @@ namespace MusicStrmExtract.Online
             return trackNumbers.Where(n => n > 0).All(mediaNumbers.Contains);
         }
     }
+
+    /// <summary>本地碟组与 release 音频 media 的映射结果,IsExact 表示每碟轨数完全一致。</summary>
+    internal sealed record ReleaseLayoutMatch(
+        IReadOnlyDictionary<LocalDisc, ReleaseMedia> Mapping,
+        bool IsExact);
 }

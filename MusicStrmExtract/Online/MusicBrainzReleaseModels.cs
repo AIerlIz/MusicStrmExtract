@@ -44,7 +44,7 @@ namespace MusicStrmExtract.Online
 
     /// <summary>
     /// 带 RG 排序键与质量分的候选。
-    /// Rank 表示"状态 -> 国家偏好 -> 年份贴近"的层级,Score 只表示同层内的实体质量。
+    /// Rank 表示"状态 -> 年份贴近 -> 国家偏好"的层级,Score 只表示同层内的实体质量。
     /// </summary>
     public sealed record RankedRelease(ReleaseSummary Release, int Score, long Rank);
 

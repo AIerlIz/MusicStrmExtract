@@ -117,11 +117,10 @@ namespace MusicStrmExtract.Ui
                 .ToList();
 
             ct.ThrowIfCancellationRequested();
-            if (_isScanRunning())
+            var aborted = AbortIfScanRunning("中止删除", "已删除 0 个陈旧 MusicAlbum");
+            if (aborted is not null)
             {
-                _logger.Info(
-                    "[MusicStrmExtract] [Repair] 媒体库扫描已开始，中止删除：已删除 0 个陈旧 MusicAlbum");
-                return "媒体库扫描已开始，修复已中止（已删除 0 个陈旧 MusicAlbum）。";
+                return aborted;
             }
 
             progress?.Report($"正在删除 {staleAlbums.Count} 个陈旧 MusicAlbum...");
@@ -129,11 +128,12 @@ namespace MusicStrmExtract.Ui
             foreach (var album in staleAlbums)
             {
                 ct.ThrowIfCancellationRequested();
-                if (_isScanRunning())
+                aborted = AbortIfScanRunning(
+                    "中止删除",
+                    $"已删除 {deleted}/{staleAlbums.Count} 个陈旧 MusicAlbum");
+                if (aborted is not null)
                 {
-                    _logger.Info(
-                        $"[MusicStrmExtract] [Repair] 媒体库扫描已开始，中止删除：已删除 {deleted}/{staleAlbums.Count} 个陈旧 MusicAlbum");
-                    return $"媒体库扫描已开始，修复已中止（已删除 {deleted} 个陈旧 MusicAlbum）。";
+                    return aborted;
                 }
 
                 _deleteAlbum(album);
@@ -146,11 +146,10 @@ namespace MusicStrmExtract.Ui
                 .ToHashSet();
 
             ct.ThrowIfCancellationRequested();
-            if (_isScanRunning())
+            aborted = AbortIfScanRunning("跳过刷新", $"已删除 {deleted} 个陈旧 MusicAlbum");
+            if (aborted is not null)
             {
-                _logger.Info(
-                    $"[MusicStrmExtract] [Repair] 媒体库扫描已开始，跳过刷新：已删除 {deleted} 个陈旧 MusicAlbum");
-                return $"媒体库扫描已开始，修复已中止（已删除 {deleted} 个陈旧 MusicAlbum）。";
+                return aborted;
             }
 
             var toRefresh = audios
@@ -172,11 +171,12 @@ namespace MusicStrmExtract.Ui
                 var queued = 0;
                 foreach (var audio in toRefresh)
                 {
-                    if (_isScanRunning())
+                    aborted = AbortIfScanRunning(
+                        "中止刷新",
+                        $"已删除 {deleted} 个陈旧 MusicAlbum，已排队 {queued} 个 .strm");
+                    if (aborted is not null)
                     {
-                        _logger.Info(
-                            $"[MusicStrmExtract] [Repair] 媒体库扫描已开始，中止刷新：已删除 {deleted} 个陈旧 MusicAlbum，已排队 {queued} 个 .strm");
-                        return $"媒体库扫描已开始，修复已中止（已删除 {deleted} 个陈旧 MusicAlbum，已排队 {queued} 个 .strm）。";
+                        return aborted;
                     }
 
                     _queueRefresh(audio.InternalId, refreshOptions);
@@ -189,6 +189,18 @@ namespace MusicStrmExtract.Ui
                 $"[MusicStrmExtract] [Repair] 删除陈旧 MusicAlbum={staleAlbums.Count}, 排队刷新 .strm={toRefresh.Count}");
             progress?.Report("修复完成。");
             return $"已删除 {staleAlbums.Count} 个陈旧 MusicAlbum，已排队刷新 {toRefresh.Count} 个 .strm。";
+        }
+
+        private string? AbortIfScanRunning(string phase, string summary)
+        {
+            if (!_isScanRunning())
+            {
+                return null;
+            }
+
+            _logger.Info(
+                $"[MusicStrmExtract] [Repair] 媒体库扫描已开始，{phase}：{summary}");
+            return $"媒体库扫描已开始，修复已中止（{summary}）。";
         }
 
         private static InternalItemsQuery CreateItemQuery(string itemType)

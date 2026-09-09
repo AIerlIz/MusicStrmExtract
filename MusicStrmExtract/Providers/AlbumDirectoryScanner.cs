@@ -99,11 +99,23 @@ namespace MusicStrmExtract.Providers
             foreach (var kv in rawGroups)
             {
                 var raw = kv.Value;
-                var commentaryNumbers = raw.Where(r => r.IsCommentary).Select(r => r.Number).ToArray();
-                var regularNumbers = raw.Where(r => !r.IsCommentary).Select(r => r.Number).ToArray();
+                var commentaryNumbers = raw
+                    .Where(r => r.IsCommentary)
+                    .Select(r => r.Number)
+                    .Where(n => n > 0)
+                    .Distinct()
+                    .OrderBy(n => n)
+                    .ToArray();
+                var regularNumbers = raw
+                    .Where(r => !r.IsCommentary)
+                    .Select(r => r.Number)
+                    .Where(n => n > 0)
+                    .Distinct()
+                    .OrderBy(n => n)
+                    .ToArray();
                 var group = new LocalDisc { DiscNumber = kv.Key == 0 ? null : kv.Key };
                 group.TrackNumbers.AddRange(raw
-                    .Select(r => StrmFileParser.MapCommentaryTrackNumber(
+                    .Select(r => StrmFileParser.MapCommentaryTrackNumberNormalized(
                         r.Number,
                         r.IsCommentary,
                         commentaryNumbers,

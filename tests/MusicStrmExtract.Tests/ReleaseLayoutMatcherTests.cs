@@ -79,6 +79,22 @@ namespace MusicStrmExtract.Tests
         }
 
         [Fact]
+        public void MapLocalDiscsToMedias_RejectsWhenExplicitDiscOnlyMatchesVideoBonus()
+        {
+            var disc1 = TestReleaseJson.LocalDisc(1, 1, 2, 3);
+            var disc2 = TestReleaseJson.LocalDisc(2, 1, 2, 3);
+            var root = TestReleaseJson.BuildReleaseWithFormats(
+                (1, "CD", TestReleaseJson.Tracks(1, 3)),
+                (2, "VCD", new[] { (1, "MV A"), (2, "MV B"), (3, "MV C") }));
+
+            var map = ReleaseLayoutMatcher.MapLocalDiscsToMedias(
+                new[] { disc1, disc2 },
+                ReleaseTracklistParser.ParseReleaseMedias(root));
+
+            Assert.Null(map);
+        }
+
+        [Fact]
         public void HasExactTrackCount_TrueWhenEveryMediaMatchesLocalCount()
         {
             var local = new LocalDisc();

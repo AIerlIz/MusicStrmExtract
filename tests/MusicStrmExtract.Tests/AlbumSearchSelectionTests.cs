@@ -152,6 +152,26 @@ namespace MusicStrmExtract.Tests
         }
 
         [Fact]
+        public async Task SearchForTrackMapAsync_DoesNotRefetchReleaseGroupCandidatesDuringSearchFallback()
+        {
+            var api = new FakeMusicBrainzApi
+            {
+                SearchJson = "{\"releases\":[" +
+                    SearchReleaseJson("a", "rg-1", 100) + "," +
+                    SearchReleaseJson("b", "rg-1", 90) +
+                    "]}",
+                RgJson = RgReleases(("a", "US", "AAA", "2014-10-27"), ("b", "US", "BBB", "2014-10-27"))
+            };
+            api.ReleaseDetails["a"] = ReleaseDetail("a", "1989", "US", 14, "2014-10-27");
+            api.ReleaseDetails["b"] = ReleaseDetail("b", "1989", "US", 14, "2014-10-27");
+
+            var result = await RunAsync(api);
+
+            Assert.True(result.Found);
+            Assert.Equal(2, api.ReleaseDetailCalls);
+        }
+
+        [Fact]
         public async Task SearchForTrackMapAsync_PrefersCdWithVideoBonusOverWorldwideDigital()
         {
             var api = new FakeMusicBrainzApi

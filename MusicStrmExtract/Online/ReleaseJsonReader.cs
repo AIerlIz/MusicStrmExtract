@@ -11,20 +11,8 @@ namespace MusicStrmExtract.Online
         public static List<ScoredRelease> ParseSearchReleases(JsonElement root)
         {
             var result = new List<ScoredRelease>();
-            if (root.ValueKind != JsonValueKind.Object
-                || !root.TryGetProperty("releases", out var releases)
-                || releases.ValueKind != JsonValueKind.Array)
+            foreach (var release in EnumerateReleaseObjects(root))
             {
-                return result;
-            }
-
-            foreach (var release in releases.EnumerateArray())
-            {
-                if (release.ValueKind != JsonValueKind.Object)
-                {
-                    continue;
-                }
-
                 result.Add(new ScoredRelease(ParseRelease(release), GetInt(release, "score")));
             }
 
@@ -33,26 +21,11 @@ namespace MusicStrmExtract.Online
 
         public static (int TotalCount, List<ReleaseSummary> Releases) ParseBrowseReleases(JsonElement root)
         {
-            var result = new List<ReleaseSummary>();
-            if (root.ValueKind == JsonValueKind.Object
-                && root.TryGetProperty("releases", out var releases)
-                && releases.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var release in releases.EnumerateArray())
-                {
-                    if (release.ValueKind == JsonValueKind.Object)
-                    {
-                        result.Add(ParseRelease(release));
-                    }
-                }
-            }
-
-            return (GetInt(root, "count"), result);
+            return (GetInt(root, "count"), ParseReleaseSummaries(root));
         }
 
         public static ParsedReleaseGroup ParseReleaseGroup(JsonElement root)
         {
-            var result = new List<ReleaseSummary>();
             if (root.ValueKind != JsonValueKind.Object)
             {
                 return new ParsedReleaseGroup(
@@ -61,19 +34,7 @@ namespace MusicStrmExtract.Online
                     null,
                     null,
                     Array.Empty<ArtistCredit>(),
-                    result);
-            }
-
-            if (root.TryGetProperty("releases", out var releases)
-                && releases.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var release in releases.EnumerateArray())
-                {
-                    if (release.ValueKind == JsonValueKind.Object)
-                    {
-                        result.Add(ParseRelease(release));
-                    }
-                }
+                    new List<ReleaseSummary>());
             }
 
             return new ParsedReleaseGroup(
@@ -82,7 +43,7 @@ namespace MusicStrmExtract.Online
                 GetString(root, "primary-type"),
                 GetString(root, "disambiguation"),
                 GetArtistCredits(root, includeNameOnlyCredits: true),
-                result);
+                ParseReleaseSummaries(root));
         }
 
         public static ReleaseSummary ParseRelease(JsonElement release)
@@ -136,6 +97,35 @@ namespace MusicStrmExtract.Online
             }
 
             return media;
+        }
+
+        private static List<ReleaseSummary> ParseReleaseSummaries(JsonElement root)
+        {
+            var result = new List<ReleaseSummary>();
+            foreach (var release in EnumerateReleaseObjects(root))
+            {
+                result.Add(ParseRelease(release));
+            }
+
+            return result;
+        }
+
+        private static IEnumerable<JsonElement> EnumerateReleaseObjects(JsonElement root)
+        {
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("releases", out var releases)
+                || releases.ValueKind != JsonValueKind.Array)
+            {
+                yield break;
+            }
+
+            foreach (var release in releases.EnumerateArray())
+            {
+                if (release.ValueKind == JsonValueKind.Object)
+                {
+                    yield return release;
+                }
+            }
         }
 
         private static string? GetPrimaryType(JsonElement release)
