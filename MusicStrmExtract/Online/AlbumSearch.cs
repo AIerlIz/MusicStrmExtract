@@ -58,17 +58,13 @@ namespace MusicStrmExtract.Online
                 || localDiscs is null
                 || localDiscs.Count == 0
                 || !localDiscs.Any(d => d.TrackNumbers.Count > 0))
-            {
                 return result;
-            }
 
             var scored = (await _api.SearchReleasesAsync(clean, artistName, SearchCandidateLimit, ct).ConfigureAwait(false))
                 .Where(s => s.Score > 0 && !string.IsNullOrWhiteSpace(s.Release.Title))
                 .ToList();
             if (scored.Count == 0)
-            {
                 return result;
-            }
 
             // 无感国家偏好:从搜索候选推断多数国家,用于 top-10 排序时的 tie-break
             var preferredCountry = ReleaseGroupScorer.InferPreferredCountry(
@@ -87,9 +83,7 @@ namespace MusicStrmExtract.Online
                 state,
                 ct).ConfigureAwait(false);
             if (rgResult is not null)
-            {
                 return rgResult;
-            }
 
             return await TryResolveFromOrderedCandidatesAsync(ordered, localDiscs, state, ct).ConfigureAwait(false);
         }
@@ -128,17 +122,13 @@ namespace MusicStrmExtract.Online
         {
             var topRgMbid = topCandidate.Release.ReleaseGroupMbid;
             if (string.IsNullOrWhiteSpace(topRgMbid))
-            {
                 return null;
-            }
 
             try
             {
                 var rg = await _api.GetReleaseGroupAsync(topRgMbid, ct).ConfigureAwait(false);
                 if (rg.Releases.Count <= 1)
-                {
                     return null;
-                }
 
                 // 从 RG lookup 候选推断偏好国家(比搜索样本更准),并传给评分
                 var rgPreferredCountry = ReleaseGroupScorer.InferPreferredCountry(rg.Releases, localDiscs);
@@ -152,14 +142,10 @@ namespace MusicStrmExtract.Online
                         localDiscs,
                         ct).ConfigureAwait(false);
                     if (match is null)
-                    {
                         continue;
-                    }
 
                     if (match.IsExact)
-                    {
                         return BuildAlbumResult(match.Release, match.Medias, rg);
-                    }
 
                     SetFallback(state, rg, match.Release, match.Medias);
                 }
@@ -196,14 +182,10 @@ namespace MusicStrmExtract.Online
                     localDiscs,
                     ct).ConfigureAwait(false);
                 if (match is null)
-                {
                     continue;
-                }
 
                 if (match.IsExact)
-                {
                     return BuildAlbumResult(match.Release, match.Medias, null);
-                }
 
                 SetFallback(state, null, match.Release, match.Medias);
             }
@@ -223,22 +205,16 @@ namespace MusicStrmExtract.Online
         {
             var releaseId = release.Id;
             if (string.IsNullOrWhiteSpace(releaseId) || state.EvaluatedReleaseIds.Contains(releaseId))
-            {
                 return null;
-            }
 
             var parsed = await _api.GetReleaseAsync(releaseId, ct).ConfigureAwait(false);
             state.EvaluatedReleaseIds.Add(releaseId);
             if (parsed.Medias.Count == 0)
-            {
                 return null;
-            }
 
             var layout = ReleaseLayoutMatcher.TryMatch(localDiscs, parsed.Medias);
             if (layout is null)
-            {
                 return null;
-            }
 
             return new CandidateMatch(parsed.Release, parsed.Medias, layout.IsExact);
         }
@@ -250,7 +226,7 @@ namespace MusicStrmExtract.Online
         {
             var artistCredits = release.ArtistCredits.Count > 0
                 ? release.ArtistCredits
-                : releaseGroup?.ArtistCredits ?? Array.Empty<ArtistCredit>();
+                : releaseGroup?.ArtistCredits ?? [];
             return new AlbumSearchResult(
                 true,
                 release.Title ?? releaseGroup?.Title,
@@ -273,9 +249,7 @@ namespace MusicStrmExtract.Online
             IReadOnlyList<ReleaseMedia> medias)
         {
             if (state.FirstFallback is not null || string.IsNullOrWhiteSpace(release.Id))
-            {
                 return;
-            }
 
             state.FirstFallback = BuildAlbumResult(release, medias, releaseGroup);
         }

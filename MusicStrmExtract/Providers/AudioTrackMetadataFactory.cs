@@ -1,11 +1,8 @@
+using MediaBrowser.Controller.Entities.Audio;
+using MusicStrmExtract.Online;
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-
-using MediaBrowser.Controller.Entities.Audio;
-
-using MusicStrmExtract.Online;
 
 namespace MusicStrmExtract.Providers
 {
@@ -32,33 +29,23 @@ namespace MusicStrmExtract.Providers
             bool isCommentary)
         {
             if (album is null || !album.Found || scan is null || rawTrackNumber <= 0)
-            {
                 return null;
-            }
 
             var layout = ReleaseLayoutMatcher.TryMatch(scan.Discs, album.Medias);
             if (layout is null)
-            {
                 return null;
-            }
 
             var group = scan.Discs.FirstOrDefault(d => d.DiscNumber == (folderDisc ?? fileDisc));
             if (group is null || !layout.Mapping.TryGetValue(group, out var media))
-            {
                 return null;
-            }
 
             var selfNumber = ResolveSelfTrackNumber(scan, group, rawTrackNumber, isCommentary);
             if (selfNumber <= 0)
-            {
                 return null;
-            }
 
             var track = media.Tracks.FirstOrDefault(t => t.Number == selfNumber);
             if (track is null)
-            {
                 return null;
-            }
 
             return new AudioTrackResolution(
                 BuildAudio(album, scan, strmPath, group, media, track, isCommentary),
@@ -74,9 +61,7 @@ namespace MusicStrmExtract.Providers
             bool isCommentary)
         {
             if (!scan.RawTracks.TryGetValue(group.DiscNumber ?? 0, out var rawRefs))
-            {
                 return rawTrackNumber;
-            }
 
             return StrmFileParser.MapCommentaryTrackNumber(
                 rawTrackNumber,
@@ -101,9 +86,7 @@ namespace MusicStrmExtract.Providers
 
             var displayName = (track.Title ?? Path.GetFileNameWithoutExtension(strmPath)).Trim();
             if (isCommentary)
-            {
                 displayName += " (Commentary)";
-            }
 
             var item = new Audio
             {
@@ -113,7 +96,7 @@ namespace MusicStrmExtract.Providers
                 IndexNumber = track.Number,
                 ParentIndexNumber = group.DiscNumber is not null || scan.Discs.Count > 1
                     ? media.Position
-                    : (int?)null,
+                    : null,
                 Artists = trackArtists,
                 AlbumArtists = albumArtists
             };
@@ -131,9 +114,7 @@ namespace MusicStrmExtract.Providers
         private static void SetProviderId(Audio item, string key, string? value)
         {
             if (string.IsNullOrWhiteSpace(value))
-            {
                 return;
-            }
 
             item.ProviderIds[key] = value.Trim();
         }

@@ -1,16 +1,14 @@
+using MediaBrowser.Controller.Entities.Audio;
+using MediaBrowser.Controller.Providers;
+using MediaBrowser.Model.Configuration;
+using MediaBrowser.Model.Logging;
+using MusicStrmExtract.Caching;
+using MusicStrmExtract.Online;
 using System;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-
-using MediaBrowser.Controller.Entities.Audio;
-using MediaBrowser.Controller.Providers;
-using MediaBrowser.Model.Configuration;
-using MediaBrowser.Model.Logging;
-
-using MusicStrmExtract.Caching;
-using MusicStrmExtract.Online;
 
 namespace MusicStrmExtract.Providers
 {
@@ -72,9 +70,7 @@ namespace MusicStrmExtract.Providers
                 && !string.IsNullOrWhiteSpace(albumDir)
                 && await TryResolveByAlbumTrackAsync(
                     info, albumFolder, artistFolder, albumDir, discNumber, config, result, cancellationToken).ConfigureAwait(false))
-            {
                 return result;
-            }
 
             return result;
         }
@@ -93,15 +89,11 @@ namespace MusicStrmExtract.Providers
         {
             var (fileDisc, rawTrackNumber, isCommentary) = StrmFileParser.ParseFileName(info.Path);
             if (rawTrackNumber <= 0)
-            {
                 return false; // 本文件无轨号,无法按轨取数
-            }
 
             var scan = AlbumDirectoryScanner.Scan(albumDir, message => _logger.Warn(message));
             if (scan.Discs.Count == 0)
-            {
                 return false;
-            }
 
             AlbumSearchResult album;
             try
@@ -126,9 +118,7 @@ namespace MusicStrmExtract.Providers
             }
 
             if (!album.Found)
-            {
                 return false;
-            }
 
             var resolution = AudioTrackMetadataFactory.TryBuild(
                 album,
@@ -139,9 +129,7 @@ namespace MusicStrmExtract.Providers
                 rawTrackNumber,
                 isCommentary);
             if (resolution is null)
-            {
                 return false;
-            }
 
             result.Item = resolution.Item;
             result.HasMetadata = true;

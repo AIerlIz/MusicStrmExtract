@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
 using System.Text.Json;
 using static MusicStrmExtract.Online.JsonUtil;
 
@@ -20,9 +19,7 @@ namespace MusicStrmExtract.Online
         {
             var medias = new List<ReleaseMedia>();
             if (!releaseRoot.TryGetProperty("media", out var mediaArr) || mediaArr.ValueKind != JsonValueKind.Array)
-            {
                 return medias;
-            }
 
             foreach (var m in mediaArr.EnumerateArray())
             {
@@ -36,9 +33,7 @@ namespace MusicStrmExtract.Online
                             ? n
                             : GetInt(t, "position");
                         if (number <= 0)
-                        {
                             continue;
-                        }
 
                         var title = GetString(t, "title");
                         string? recordingMbid = null;
@@ -51,14 +46,10 @@ namespace MusicStrmExtract.Online
                             foreach (var credit in GetArtistCredits(rec, includeNameOnlyCredits: false))
                             {
                                 if (!string.IsNullOrWhiteSpace(credit.Name))
-                                {
                                     artists.Add(credit.Name!);
-                                }
 
                                 if (artistMbid is null && !string.IsNullOrWhiteSpace(credit.Id))
-                                {
                                     artistMbid = credit.Id;
-                                }
                             }
                         }
 
@@ -67,7 +58,7 @@ namespace MusicStrmExtract.Online
                             title,
                             recordingMbid,
                             artistMbid,
-                            artists.ToArray()));
+                            [.. artists]));
                     }
                 }
 
@@ -77,7 +68,7 @@ namespace MusicStrmExtract.Online
                     medias.Add(new ReleaseMedia(
                         GetInt(m, "position"),
                         GetString(m, "format"),
-                        tracks.ToArray()));
+                        [.. tracks]));
                 }
             }
 

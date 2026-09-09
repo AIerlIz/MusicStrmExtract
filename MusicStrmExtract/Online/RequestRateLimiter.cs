@@ -33,9 +33,7 @@ namespace MusicStrmExtract.Online
                 var now = _clock();
                 var elapsed = now - _lastRequestUtc;
                 if (elapsed < _minimumInterval)
-                {
                     await Task.Delay(_minimumInterval - elapsed, ct).ConfigureAwait(false);
-                }
 
                 _lastRequestUtc = _clock();
                 return new Lease(_gate);
@@ -65,9 +63,7 @@ namespace MusicStrmExtract.Online
             public void Dispose()
             {
                 if (Interlocked.Exchange(ref _disposed, 1) == 0)
-                {
                     _gate.Release();
-                }
             }
         }
     }

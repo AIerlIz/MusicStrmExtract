@@ -47,9 +47,7 @@ namespace MusicStrmExtract.Providers
         {
             var fileDir = Path.GetDirectoryName(strmPath);
             if (string.IsNullOrWhiteSpace(fileDir))
-            {
                 return (null, null, null, null);
-            }
 
             var discNumber = ParseDiscFolderName(Path.GetFileName(fileDir));
             if (discNumber is not null && !string.IsNullOrWhiteSpace(Path.GetDirectoryName(fileDir)))
@@ -79,28 +77,20 @@ namespace MusicStrmExtract.Providers
         {
             var name = Path.GetFileName(filePath);
             if (name.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
-            {
                 name = name.Substring(0, name.Length - ".strm".Length);
-            }
 
             var isCommentary = CommentaryRegex.IsMatch(name);
             var discTrack = KeywordDiscTrackRegex.Match(name);
             if (discTrack.Success && TryNumber(discTrack.Groups[2], out var track) && track > 0)
-            {
                 return (GetDisc(discTrack.Groups[1]), track, isCommentary);
-            }
 
             discTrack = PlainDiscTrackRegex.Match(name);
             if (discTrack.Success && TryNumber(discTrack.Groups[2], out track) && track > 0)
-            {
                 return (GetDisc(discTrack.Groups[1]), track, isCommentary);
-            }
 
             var trackOnly = TrackNumberRegex.Match(name);
             if (trackOnly.Success && TryNumber(trackOnly.Groups[1], out track) && track > 0)
-            {
                 return (null, track, isCommentary);
-            }
 
             return (null, 0, isCommentary);
         }
@@ -141,17 +131,15 @@ namespace MusicStrmExtract.Providers
         public static int? ParseDiscFolderName(string? name)
         {
             if (string.IsNullOrWhiteSpace(name))
-            {
                 return null;
-            }
 
             var m = DiscFolderRegex.Match(name);
-            return m.Success && TryNumber(m.Groups[1], out var disc) ? disc : (int?)null;
+            return m.Success && TryNumber(m.Groups[1], out var disc) ? disc : null;
         }
 
         private static int? GetDisc(Group group)
         {
-            return TryNumber(group, out var disc) && disc > 0 ? disc : (int?)null;
+            return TryNumber(group, out var disc) && disc > 0 ? disc : null;
         }
 
         private static bool TryNumber(Group group, out int number)

@@ -1,16 +1,14 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Xml.Linq;
-
 using MediaBrowser.Common;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Model.Drawing;
 using MediaBrowser.Model.Plugins.UI;
-
 using MusicStrmExtract.Ui;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Xml.Linq;
 
 namespace MusicStrmExtract
 {

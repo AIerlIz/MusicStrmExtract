@@ -9,7 +9,7 @@ namespace MusicStrmExtract.Online
     /// </summary>
     internal static class AlbumFolderNameParser
     {
-        private static readonly Regex YearSuffixRegex = new Regex(
+        private static readonly Regex YearSuffixRegex = new(
             @"[\s_\-\.]*[\(\[（【]?\s*(18|19|20)\d{2}\s*[\)\]）】]?\s*$",
             RegexOptions.Compiled);
 
@@ -17,7 +17,7 @@ namespace MusicStrmExtract.Online
             @"[\s\-\._]+$",
             RegexOptions.Compiled);
 
-        private static readonly Regex FolderYearRegex = new Regex(
+        private static readonly Regex FolderYearRegex = new(
             @"\b(1[89]\d{2}|20\d{2})\s*[\)\]）】]?\s*$",
             RegexOptions.Compiled);
 
@@ -25,17 +25,13 @@ namespace MusicStrmExtract.Online
         public static string? Clean(string? raw, string? artistName = null)
         {
             if (string.IsNullOrWhiteSpace(raw))
-            {
                 return null;
-            }
 
             var trimmed = raw.Trim();
             // 同名专辑目录(如 "The 1975" 的艺人自名专辑)不应把标题年份当发行年份剥掉。
             if (!string.IsNullOrWhiteSpace(artistName)
                 && string.Equals(trimmed, artistName.Trim(), StringComparison.OrdinalIgnoreCase))
-            {
                 return trimmed;
-            }
 
             var s = trimmed;
             s = YearSuffixRegex.Replace(s, string.Empty);
@@ -58,7 +54,7 @@ namespace MusicStrmExtract.Online
             var match = FolderYearRegex.Match(trimmed);
             return match.Success
                 ? int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture)
-                : (int?)null;
+                : null;
         }
     }
 }

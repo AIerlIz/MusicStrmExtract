@@ -13,9 +13,7 @@ namespace MusicStrmExtract.Online
         {
             if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value)
                 && value.ValueKind == JsonValueKind.String)
-            {
                 return value.GetString();
-            }
 
             return null;
         }
@@ -25,15 +23,11 @@ namespace MusicStrmExtract.Online
             if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value))
             {
                 if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number))
-                {
                     return number;
-                }
 
                 if (value.ValueKind == JsonValueKind.String
                     && int.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
-                {
                     return parsed;
-                }
             }
 
             return 0;
@@ -42,11 +36,9 @@ namespace MusicStrmExtract.Online
         public static int? ParseYear(string? date)
         {
             if (string.IsNullOrWhiteSpace(date))
-            {
                 return null;
-            }
 
-            var m = Regex.Match(date, @"\b(1[89]\d{2}|20\d{2})\b");
+            Match m = Regex.Match(date, @"\b(1[89]\d{2}|20\d{2})\b");
             return m.Success ? int.Parse(m.Value, CultureInfo.InvariantCulture) : null;
         }
 
@@ -54,9 +46,7 @@ namespace MusicStrmExtract.Online
         public static int? ParseLeadingYear(string? date)
         {
             if (string.IsNullOrWhiteSpace(date))
-            {
                 return null;
-            }
 
             var m = Regex.Match(date, @"^\d{4}");
             return m.Success ? int.Parse(m.Value, CultureInfo.InvariantCulture) : null;
@@ -83,9 +73,7 @@ namespace MusicStrmExtract.Online
             if (owner.ValueKind != JsonValueKind.Object
                 || !owner.TryGetProperty("artist-credit", out var credit)
                 || credit.ValueKind != JsonValueKind.Array)
-            {
                 return credits;
-            }
 
             foreach (var item in credit.EnumerateArray())
             {
@@ -99,9 +87,7 @@ namespace MusicStrmExtract.Online
                 {
                     var name = GetString(item, "name");
                     if (name is not null)
-                    {
                         credits.Add(new ArtistCredit(name, null));
-                    }
                 }
             }
 

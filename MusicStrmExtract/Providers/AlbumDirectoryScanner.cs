@@ -1,9 +1,8 @@
+using MusicStrmExtract.Online;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-
-using MusicStrmExtract.Online;
 
 namespace MusicStrmExtract.Providers
 {
@@ -42,9 +41,7 @@ namespace MusicStrmExtract.Providers
             {
                 var key = disc ?? 0;
                 if (number <= 0 || !seen.Add((key, number, isCommentary)))
-                {
                     return;
-                }
 
                 if (!rawGroups.TryGetValue(key, out var list))
                 {
@@ -60,9 +57,7 @@ namespace MusicStrmExtract.Providers
                 foreach (var f in Directory.EnumerateFiles(albumDir))
                 {
                     if (!StrmFileParser.IsStrmPath(f))
-                    {
                         continue;
-                    }
 
                     var (disc, number, isCommentary) = StrmFileParser.ParseFileName(f);
                     AddTrack(disc, number, isCommentary);
@@ -72,16 +67,12 @@ namespace MusicStrmExtract.Providers
                 {
                     var disc = StrmFileParser.ParseDiscFolderName(Path.GetFileName(sub));
                     if (disc is null)
-                    {
                         continue;
-                    }
 
                     foreach (var f in Directory.EnumerateFiles(sub))
                     {
                         if (!StrmFileParser.IsStrmPath(f))
-                        {
                             continue;
-                        }
 
                         var (_, number, isCommentary) = StrmFileParser.ParseFileName(f);
                         AddTrack(disc, number, isCommentary);
@@ -132,9 +123,7 @@ namespace MusicStrmExtract.Providers
                 return an.CompareTo(bn);
             });
             foreach (var g in result)
-            {
                 g.TrackNumbers.Sort();
-            }
 
             return new AlbumDirectoryScan(result, rawGroups);
         }

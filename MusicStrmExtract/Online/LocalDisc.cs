@@ -7,6 +7,6 @@ namespace MusicStrmExtract.Online
     {
         public int? DiscNumber { get; set; }
 
-        public List<int> TrackNumbers { get; } = new List<int>();
+        public List<int> TrackNumbers { get; } = [];
     }
 }

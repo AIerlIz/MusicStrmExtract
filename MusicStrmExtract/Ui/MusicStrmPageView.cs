@@ -1,11 +1,10 @@
-using System;
-using System.Threading;
-using System.Threading.Tasks;
-
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Events;
 using MediaBrowser.Model.GenericEdit;
 using MediaBrowser.Model.Plugins.UI.Views;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace MusicStrmExtract.Ui
 {

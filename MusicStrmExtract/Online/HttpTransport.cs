@@ -12,18 +12,11 @@ namespace MusicStrmExtract.Online
         Task<HttpResponse> GetAsync(string url, CancellationToken ct);
     }
 
-    internal sealed class HttpClientTransport : IHttpTransport
+    internal sealed class HttpClientTransport(HttpClient http) : IHttpTransport
     {
-        private readonly HttpClient _http;
-
-        public HttpClientTransport(HttpClient http)
-        {
-            _http = http;
-        }
-
         public async Task<HttpResponse> GetAsync(string url, CancellationToken ct)
         {
-            using var response = await _http
+            using var response = await http
                 .GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct)
                 .ConfigureAwait(false);
             var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
@@ -32,7 +25,7 @@ namespace MusicStrmExtract.Online
 
         public void Dispose()
         {
-            _http.Dispose();
+            http.Dispose();
         }
     }
 }

@@ -1,5 +1,3 @@
-using System;
-
 namespace MusicStrmExtract
 {
     /// <summary>全插件共享的常量/标识。</summary>

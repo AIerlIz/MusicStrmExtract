@@ -1,3 +1,6 @@
+using MediaBrowser.Model.Logging;
+using MusicStrmExtract.Caching;
+using MusicStrmExtract.Online;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -5,11 +8,6 @@ using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-
-using MediaBrowser.Model.Logging;
-
-using MusicStrmExtract.Caching;
-using MusicStrmExtract.Online;
 
 namespace MusicStrmExtract.Providers
 {
@@ -52,9 +50,7 @@ namespace MusicStrmExtract.Providers
             CancellationToken ct)
         {
             if (_cache.TryGet(cacheKey, out var cached))
-            {
                 return cached;
-            }
 
             var task = _inflight.GetOrAdd(cacheKey, _ => SearchCoreAsync(
                 cacheKey,

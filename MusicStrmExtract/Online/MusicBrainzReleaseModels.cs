@@ -76,7 +76,7 @@ namespace MusicStrmExtract.Online
         string? AlbumArtistMbid,
         IReadOnlyList<ReleaseMedia> Medias)
     {
-        public static readonly AlbumSearchResult Empty = new AlbumSearchResult(
+        public static readonly AlbumSearchResult Empty = new(
             false,
             null,
             null,
@@ -84,6 +84,6 @@ namespace MusicStrmExtract.Online
             null,
             null,
             null,
-            Array.Empty<ReleaseMedia>());
+            []);
     }
 }

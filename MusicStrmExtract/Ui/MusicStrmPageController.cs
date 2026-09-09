@@ -1,13 +1,12 @@
-using System;
-using System.Threading;
-using System.Threading.Tasks;
-
 using MediaBrowser.Common;
-using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.IO;
+using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Plugins.UI;
 using MediaBrowser.Model.Plugins.UI.Views;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace MusicStrmExtract.Ui
 {

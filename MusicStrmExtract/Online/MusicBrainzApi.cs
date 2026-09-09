@@ -69,9 +69,7 @@ namespace MusicStrmExtract.Online
             var sb = new System.Text.StringBuilder("release:");
             sb.Append('"').Append(album.Replace("\"", string.Empty)).Append('"');
             if (!string.IsNullOrWhiteSpace(artist))
-            {
                 sb.Append(" AND artist:\"").Append(artist.Trim().Replace("\"", string.Empty)).Append('"');
-            }
 
             var query = Uri.EscapeDataString(sb.ToString());
             var url = $"{_baseUrl}/ws/2/release?query={query}&fmt=json&limit={limit}";
@@ -90,9 +88,7 @@ namespace MusicStrmExtract.Online
             var group = ReleaseJsonReader.ParseReleaseGroup(
                 await GetJsonRootAsync(url, ct).ConfigureAwait(false));
             if (group.Releases.Count < LinkedReleaseLookupLimit)
-            {
                 return group;
-            }
 
             return await LoadRemainingReleaseGroupReleasesAsync(group, rgMbid, ct).ConfigureAwait(false);
         }
@@ -121,15 +117,11 @@ namespace MusicStrmExtract.Online
                 foreach (var release in page)
                 {
                     if (!string.IsNullOrWhiteSpace(release.Id) && seen.Add(release.Id))
-                    {
                         releases.Add(release);
-                    }
                 }
 
                 if (page.Count == 0 || releases.Count >= totalCount)
-                {
                     break;
-                }
 
                 offset += page.Count;
             }
@@ -179,9 +171,7 @@ namespace MusicStrmExtract.Online
         private static string Truncate(string value, int max)
         {
             if (string.IsNullOrEmpty(value) || value.Length <= max)
-            {
                 return value ?? string.Empty;
-            }
 
             return string.Concat(value.AsSpan(0, max), "...");
         }
@@ -189,9 +179,7 @@ namespace MusicStrmExtract.Online
         public void Dispose()
         {
             if (_ownsTransport)
-            {
                 _transport.Dispose();
-            }
         }
     }
 }

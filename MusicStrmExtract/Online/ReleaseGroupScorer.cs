@@ -37,9 +37,7 @@ namespace MusicStrmExtract.Online
         {
             var result = new List<RankedRelease>();
             if (releases is null || releases.Count == 0)
-            {
                 return result;
-            }
 
             var barcodeCounts = CountBarcodes(releases);
             foreach (var release in releases)
@@ -62,9 +60,7 @@ namespace MusicStrmExtract.Online
         {
             var cmp = a.Rank.CompareTo(b.Rank);
             if (cmp != 0)
-            {
                 return cmp;
-            }
 
             var scoreCmp = b.Score.CompareTo(a.Score);
             var dateCmp = string.Compare(
@@ -95,9 +91,7 @@ namespace MusicStrmExtract.Online
             IReadOnlyList<LocalDisc> localDiscs)
         {
             if (releases is null || releases.Count == 0 || localDiscs is null || localDiscs.Count == 0)
-            {
                 return null;
-            }
 
             var barcodeCounts = CountBarcodes(releases);
 
@@ -110,9 +104,7 @@ namespace MusicStrmExtract.Online
                             && LayoutMatchesLocal(r, localDiscs))
                 .ToList();
             if (compatible.Count == 0)
-            {
                 return null;
-            }
 
             return compatible
                 .GroupBy(r => r.Country ?? string.Empty)
@@ -148,13 +140,11 @@ namespace MusicStrmExtract.Online
                 rank += gap * YearGapRankBase;
             }
 
+            // 同状态、同年份贴近层内的国家偏好;不跨越年份贴近层。
             if (!string.IsNullOrWhiteSpace(preferredCountry)
                 && ReleaseStatusPolicy.IsOfficial(release.Status)
                 && !string.Equals(release.Country, preferredCountry, StringComparison.OrdinalIgnoreCase))
-            {
-                // 同状态、同年份贴近层内的国家偏好;不跨越年份贴近层。
                 rank += CountryRankBase;
-            }
 
             return rank;
         }
@@ -166,9 +156,7 @@ namespace MusicStrmExtract.Online
                 .Where(m => !ReleaseLayoutMatcher.IsVideoMedia(m.Format))
                 .ToList();
             if (audioMedia.Count != localDiscs.Count)
-            {
                 return false;
-            }
 
             // 按 media.position 与本地碟(DiscNumber/轨数)排序后逐碟比对
             var sortedMedia = audioMedia.OrderBy(m => m.Position).ToList();
@@ -177,9 +165,7 @@ namespace MusicStrmExtract.Online
             {
                 var trackCount = sortedMedia[i].TrackCount;
                 if (trackCount <= 0 || trackCount != sortedLocal[i].TrackNumbers.Count)
-                {
                     return false;
-                }
             }
 
             return true;
@@ -204,9 +190,7 @@ namespace MusicStrmExtract.Online
             foreach (var release in releases)
             {
                 if (string.IsNullOrWhiteSpace(release.Barcode))
-                {
                     continue;
-                }
 
                 barcodeCounts.TryGetValue(release.Barcode, out var count);
                 barcodeCounts[release.Barcode] = count + 1;
@@ -224,26 +208,17 @@ namespace MusicStrmExtract.Online
             {
                 score += BarcodePresentWeight;
                 if (barcodeCounts.TryGetValue(release.Barcode, out var count))
-                {
                     score += Math.Min(count * BarcodeFrequencyPerOccurrence, BarcodeFrequencyMax);
-                }
             }
 
             if (!string.IsNullOrWhiteSpace(release.Date) && IsCompleteDate(release.Date))
-            {
                 score += CompleteDateWeight;
-            }
 
             if (IsCdFormat(release))
-            {
                 score += CdFormatWeight;
-            }
 
             if (string.Equals(release.Packaging, "Jewel Case", StringComparison.OrdinalIgnoreCase))
-            {
                 score += JewelCaseWeight;
-            }
-
 
             return score;
         }

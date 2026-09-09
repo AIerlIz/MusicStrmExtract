@@ -1,6 +1,5 @@
-﻿using System.ComponentModel;
-
-using Emby.Web.GenericEdit;
+﻿using Emby.Web.GenericEdit;
+using System.ComponentModel;
 
 namespace MusicStrmExtract
 {

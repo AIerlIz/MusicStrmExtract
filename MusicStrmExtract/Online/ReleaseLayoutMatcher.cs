@@ -19,17 +19,13 @@ namespace MusicStrmExtract.Online
             IReadOnlyList<ReleaseMedia> medias)
         {
             if (localDiscs is null || localDiscs.Count == 0 || medias is null || medias.Count == 0)
-            {
                 return null;
-            }
 
             var audioMedias = medias
                 .Where(m => !IsVideoMedia(m.Format))
                 .ToList();
             if (audioMedias.Count == 0)
-            {
                 return null;
-            }
 
             var explicitGroups = localDiscs
                 .Where(d => d.DiscNumber is > 0)
@@ -46,9 +42,7 @@ namespace MusicStrmExtract.Online
             {
                 var media = audioMedias.FirstOrDefault(m => m.Position == group.DiscNumber!.Value);
                 if (media is null || !usedPositions.Add(media.Position) || !Covers(media, group.TrackNumbers))
-                {
                     return null;
-                }
 
                 map.Add(group, media);
             }
@@ -61,9 +55,7 @@ namespace MusicStrmExtract.Online
             {
                 var media = remaining.FirstOrDefault(m => Covers(m, group.TrackNumbers));
                 if (media is null)
-                {
                     return null;
-                }
 
                 remaining.Remove(media);
                 map.Add(group, media);
@@ -99,16 +91,12 @@ namespace MusicStrmExtract.Online
             if (localDiscs is null || localDiscs.Count == 0
                 || mapping is null || mapping.Count == 0
                 || mapping.Count != requiredMediaCount)
-            {
                 return false;
-            }
 
             foreach (var pair in mapping)
             {
                 if (pair.Key.TrackNumbers.Count != pair.Value.Tracks.Count)
-                {
                     return false;
-                }
             }
 
             return true;
@@ -124,9 +112,7 @@ namespace MusicStrmExtract.Online
         {
             var mapping = MapLocalDiscsToMedias(localDiscs, medias);
             if (mapping is null)
-            {
                 return null;
-            }
 
             return new ReleaseLayoutMatch(
                 mapping,

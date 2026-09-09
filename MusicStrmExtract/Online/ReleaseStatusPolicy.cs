@@ -19,20 +19,14 @@ namespace MusicStrmExtract.Online
         public static ReleaseStatusTier Classify(string? status)
         {
             if (string.Equals(status, "Official", StringComparison.OrdinalIgnoreCase))
-            {
                 return ReleaseStatusTier.Official;
-            }
 
             if (string.Equals(status, "Pseudo-Release", StringComparison.OrdinalIgnoreCase))
-            {
                 return ReleaseStatusTier.PseudoRelease;
-            }
 
             if (string.Equals(status, "Bootleg", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(status, "Withdrawn", StringComparison.OrdinalIgnoreCase))
-            {
                 return ReleaseStatusTier.BootlegOrWithdrawn;
-            }
 
             return ReleaseStatusTier.PromotionalOrUnknown;
         }

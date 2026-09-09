@@ -9,7 +9,7 @@ namespace MusicStrmExtract.Caching
     /// </summary>
     public sealed class TtlCache<TValue>
     {
-        private readonly object _gate = new object();
+        private readonly object _gate = new();
         private readonly TimeSpan _ttl;
         private readonly int _maxEntries;
         private readonly Dictionary<string, Node> _map;
@@ -95,17 +95,13 @@ namespace MusicStrmExtract.Caching
         private void ExpireOldest(DateTime now)
         {
             while (_head != null && now - _head.CreatedUtc >= _ttl)
-            {
                 RemoveNode(_head);
-            }
         }
 
         private void EvictWhileOverCapacity()
         {
             while (_head != null && _map.Count > _maxEntries)
-            {
                 RemoveNode(_head);
-            }
         }
 
         private void AddTail(Node node)
@@ -127,22 +123,14 @@ namespace MusicStrmExtract.Caching
             _map.Remove(node.Key);
 
             if (node.Previous is null)
-            {
                 _head = node.Next;
-            }
             else
-            {
                 node.Previous.Next = node.Next;
-            }
 
             if (node.Next is null)
-            {
                 _tail = node.Previous;
-            }
             else
-            {
                 node.Next.Previous = node.Previous;
-            }
 
             node.Previous = null;
             node.Next = null;
