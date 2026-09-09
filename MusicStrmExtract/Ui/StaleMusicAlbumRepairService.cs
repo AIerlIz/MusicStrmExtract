@@ -4,216 +4,212 @@ using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.IO;
 using MediaBrowser.Model.Logging;
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 
-namespace MusicStrmExtract.Ui
+namespace MusicStrmExtract.Ui;
+
+/// <summary>
+/// 保守修复:只清理无 MusicBrainzAlbum、无文件路径、且没有任何 Audio 通过 AlbumId 引用的 MusicAlbum,
+/// 随后把 MusicBrainzAlbum 已存在但 AlbumId 缺失，或 AlbumId 指向陈旧专辑的 .strm 加入刷新队列。
+/// </summary>
+internal sealed class StaleMusicAlbumRepairService
 {
-    /// <summary>
-    /// 保守修复:只清理无 MusicBrainzAlbum、无文件路径、且没有任何 Audio 通过 AlbumId 引用的 MusicAlbum,
-    /// 随后把 MusicBrainzAlbum 已存在但 AlbumId 缺失，或 AlbumId 指向陈旧专辑的 .strm 加入刷新队列。
-    /// </summary>
-    internal sealed class StaleMusicAlbumRepairService
+    private const string ScanRunningMessage =
+        "媒体库扫描正在运行，请等待扫描结束后再执行修复。";
+
+    private readonly ILogger _logger;
+    private readonly Func<bool> _isScanRunning;
+    private readonly Func<IReadOnlyList<Audio>> _getAudios;
+    private readonly Func<IReadOnlyList<MusicAlbum>> _getMusicAlbums;
+    private readonly Action<MusicAlbum> _deleteAlbum;
+    private readonly Action<long, MetadataRefreshOptions> _queueRefresh;
+    private readonly IFileSystem? _fileSystem;
+    private int _isRunning;
+
+    public StaleMusicAlbumRepairService(
+        ILogManager logManager,
+        ILibraryManager libraryManager,
+        IProviderManager providerManager,
+        IFileSystem fileSystem)
     {
-        private const string ScanRunningMessage =
-            "媒体库扫描正在运行，请等待扫描结束后再执行修复。";
-
-        private readonly ILogger _logger;
-        private readonly Func<bool> _isScanRunning;
-        private readonly Func<IReadOnlyList<Audio>> _getAudios;
-        private readonly Func<IReadOnlyList<MusicAlbum>> _getMusicAlbums;
-        private readonly Action<MusicAlbum> _deleteAlbum;
-        private readonly Action<long, MetadataRefreshOptions> _queueRefresh;
-        private readonly IFileSystem? _fileSystem;
-        private int _isRunning;
-
-        public StaleMusicAlbumRepairService(
-            ILogManager logManager,
-            ILibraryManager libraryManager,
-            IProviderManager providerManager,
-            IFileSystem fileSystem)
+        _logger = logManager.GetLogger("MusicStrmExtract");
+        _isScanRunning = () => libraryManager.IsScanRunning;
+        _getAudios = () => libraryManager
+            .GetItemList(CreateItemQuery(nameof(Audio)))
+            .OfType<Audio>()
+            .ToList();
+        _getMusicAlbums = () => libraryManager
+            .GetItemList(CreateItemQuery(nameof(MusicAlbum)))
+            .OfType<MusicAlbum>()
+            .ToList();
+        _deleteAlbum = album => libraryManager.DeleteItem(album, new DeleteOptions
         {
-            _logger = logManager.GetLogger("MusicStrmExtract");
-            _isScanRunning = () => libraryManager.IsScanRunning;
-            _getAudios = () => libraryManager
-                .GetItemList(CreateItemQuery(nameof(Audio)))
-                .OfType<Audio>()
-                .ToList();
-            _getMusicAlbums = () => libraryManager
-                .GetItemList(CreateItemQuery(nameof(MusicAlbum)))
-                .OfType<MusicAlbum>()
-                .ToList();
-            _deleteAlbum = album => libraryManager.DeleteItem(album, new DeleteOptions
-            {
-                DeleteFileLocation = false,
-                DeleteFromExternalProvider = false
-            });
-            _queueRefresh = (id, options) =>
-                providerManager.QueueRefresh(id, options, RefreshPriority.High);
-            _fileSystem = fileSystem;
+            DeleteFileLocation = false,
+            DeleteFromExternalProvider = false
+        });
+        _queueRefresh = (id, options) =>
+            providerManager.QueueRefresh(id, options, RefreshPriority.High);
+        _fileSystem = fileSystem;
+    }
+
+    internal StaleMusicAlbumRepairService(
+        ILogger logger,
+        Func<bool> isScanRunning,
+        Func<IReadOnlyList<Audio>> getAudios,
+        Func<IReadOnlyList<MusicAlbum>> getMusicAlbums,
+        Action<MusicAlbum> deleteAlbum,
+        Action<long, MetadataRefreshOptions> queueRefresh,
+        IFileSystem? fileSystem = null)
+    {
+        _logger = logger;
+        _isScanRunning = isScanRunning;
+        _getAudios = getAudios;
+        _getMusicAlbums = getMusicAlbums;
+        _deleteAlbum = deleteAlbum;
+        _queueRefresh = queueRefresh;
+        _fileSystem = fileSystem;
+    }
+
+    public string Run(IProgress<string>? progress = null, CancellationToken ct = default)
+    {
+        if (Interlocked.Exchange(ref _isRunning, 1) != 0)
+        {
+            return "修复正在运行，请等待当前任务结束后再执行。";
         }
 
-        internal StaleMusicAlbumRepairService(
-            ILogger logger,
-            Func<bool> isScanRunning,
-            Func<IReadOnlyList<Audio>> getAudios,
-            Func<IReadOnlyList<MusicAlbum>> getMusicAlbums,
-            Action<MusicAlbum> deleteAlbum,
-            Action<long, MetadataRefreshOptions> queueRefresh,
-            IFileSystem? fileSystem = null)
+        try
         {
-            _logger = logger;
-            _isScanRunning = isScanRunning;
-            _getAudios = getAudios;
-            _getMusicAlbums = getMusicAlbums;
-            _deleteAlbum = deleteAlbum;
-            _queueRefresh = queueRefresh;
-            _fileSystem = fileSystem;
+            return RunCore(progress, ct);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _isRunning, 0);
+        }
+    }
+
+    private string RunCore(IProgress<string>? progress, CancellationToken ct)
+    {
+        progress?.Report("正在检查媒体库状态...");
+        if (_isScanRunning())
+        {
+            return ScanRunningMessage;
         }
 
-        public string Run(IProgress<string>? progress = null, CancellationToken ct = default)
-        {
-            if (Interlocked.Exchange(ref _isRunning, 1) != 0)
-            {
-                return "修复正在运行，请等待当前任务结束后再执行。";
-            }
+        var audios = _getAudios();
+        ct.ThrowIfCancellationRequested();
+        var referencedAlbumIds = audios
+            .Where(a => a.AlbumId != 0)
+            .Select(a => a.AlbumId)
+            .ToHashSet();
 
-            try
-            {
-                return RunCore(progress, ct);
-            }
-            finally
-            {
-                Interlocked.Exchange(ref _isRunning, 0);
-            }
+        var albums = _getMusicAlbums();
+        ct.ThrowIfCancellationRequested();
+        var staleAlbums = albums
+            .Where(a => !HasMusicBrainzAlbum(a)
+                && string.IsNullOrWhiteSpace(a.Path)
+                && !referencedAlbumIds.Contains(a.InternalId))
+            .ToList();
+
+        ct.ThrowIfCancellationRequested();
+        var aborted = AbortIfScanRunning("中止删除", "已删除 0 个陈旧 MusicAlbum");
+        if (aborted is not null)
+        {
+            return aborted;
         }
 
-        private string RunCore(IProgress<string>? progress, CancellationToken ct)
+        progress?.Report($"正在删除 {staleAlbums.Count} 个陈旧 MusicAlbum...");
+        var deleted = 0;
+        foreach (var album in staleAlbums)
         {
-            progress?.Report("正在检查媒体库状态...");
-            if (_isScanRunning())
-            {
-                return ScanRunningMessage;
-            }
-
-            var audios = _getAudios();
             ct.ThrowIfCancellationRequested();
-            var referencedAlbumIds = audios
-                .Where(a => a.AlbumId != 0)
-                .Select(a => a.AlbumId)
-                .ToHashSet();
-
-            var albums = _getMusicAlbums();
-            ct.ThrowIfCancellationRequested();
-            var staleAlbums = albums
-                .Where(a => !HasMusicBrainzAlbum(a)
-                    && string.IsNullOrWhiteSpace(a.Path)
-                    && !referencedAlbumIds.Contains(a.InternalId))
-                .ToList();
-
-            ct.ThrowIfCancellationRequested();
-            var aborted = AbortIfScanRunning("中止删除", "已删除 0 个陈旧 MusicAlbum");
+            aborted = AbortIfScanRunning(
+                "中止删除",
+                $"已删除 {deleted}/{staleAlbums.Count} 个陈旧 MusicAlbum");
             if (aborted is not null)
             {
                 return aborted;
             }
 
-            progress?.Report($"正在删除 {staleAlbums.Count} 个陈旧 MusicAlbum...");
-            var deleted = 0;
-            foreach (var album in staleAlbums)
+            _deleteAlbum(album);
+            deleted++;
+        }
+
+        var staleReferencedAlbumIds = albums
+            .Where(a => !HasMusicBrainzAlbum(a) && referencedAlbumIds.Contains(a.InternalId))
+            .Select(a => a.InternalId)
+            .ToHashSet();
+
+        ct.ThrowIfCancellationRequested();
+        aborted = AbortIfScanRunning("跳过刷新", $"已删除 {deleted} 个陈旧 MusicAlbum");
+        if (aborted is not null)
+        {
+            return aborted;
+        }
+
+        var toRefresh = audios
+            .Where(a => a.Path?.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) == true
+                && (staleReferencedAlbumIds.Contains(a.AlbumId)
+                    || (a.AlbumId == 0 && HasMusicBrainzAlbum(a))))
+            .ToList();
+
+        if (toRefresh.Count > 0)
+        {
+            progress?.Report($"正在排队刷新 {toRefresh.Count} 个 .strm...");
+            var refreshOptions = new MetadataRefreshOptions(_fileSystem)
             {
-                ct.ThrowIfCancellationRequested();
+                MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
+                ImageRefreshMode = MetadataRefreshMode.FullRefresh,
+                ReplaceAllMetadata = false
+            };
+
+            var queued = 0;
+            foreach (var audio in toRefresh)
+            {
                 aborted = AbortIfScanRunning(
-                    "中止删除",
-                    $"已删除 {deleted}/{staleAlbums.Count} 个陈旧 MusicAlbum");
+                    "中止刷新",
+                    $"已删除 {deleted} 个陈旧 MusicAlbum，已排队 {queued} 个 .strm");
                 if (aborted is not null)
                 {
                     return aborted;
                 }
 
-                _deleteAlbum(album);
-                deleted++;
+                _queueRefresh(audio.InternalId, refreshOptions);
+                queued++;
+                ct.ThrowIfCancellationRequested();
             }
-
-            var staleReferencedAlbumIds = albums
-                .Where(a => !HasMusicBrainzAlbum(a) && referencedAlbumIds.Contains(a.InternalId))
-                .Select(a => a.InternalId)
-                .ToHashSet();
-
-            ct.ThrowIfCancellationRequested();
-            aborted = AbortIfScanRunning("跳过刷新", $"已删除 {deleted} 个陈旧 MusicAlbum");
-            if (aborted is not null)
-            {
-                return aborted;
-            }
-
-            var toRefresh = audios
-                .Where(a => a.Path?.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) == true
-                    && (staleReferencedAlbumIds.Contains(a.AlbumId)
-                        || (a.AlbumId == 0 && HasMusicBrainzAlbum(a))))
-                .ToList();
-
-            if (toRefresh.Count > 0)
-            {
-                progress?.Report($"正在排队刷新 {toRefresh.Count} 个 .strm...");
-                var refreshOptions = new MetadataRefreshOptions(_fileSystem)
-                {
-                    MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
-                    ImageRefreshMode = MetadataRefreshMode.FullRefresh,
-                    ReplaceAllMetadata = false
-                };
-
-                var queued = 0;
-                foreach (var audio in toRefresh)
-                {
-                    aborted = AbortIfScanRunning(
-                        "中止刷新",
-                        $"已删除 {deleted} 个陈旧 MusicAlbum，已排队 {queued} 个 .strm");
-                    if (aborted is not null)
-                    {
-                        return aborted;
-                    }
-
-                    _queueRefresh(audio.InternalId, refreshOptions);
-                    queued++;
-                    ct.ThrowIfCancellationRequested();
-                }
-            }
-
-            _logger.Info(
-                $"[MusicStrmExtract] [Repair] 删除陈旧 MusicAlbum={staleAlbums.Count}, 排队刷新 .strm={toRefresh.Count}");
-            progress?.Report("修复完成。");
-            return $"已删除 {staleAlbums.Count} 个陈旧 MusicAlbum，已排队刷新 {toRefresh.Count} 个 .strm。";
         }
 
-        private string? AbortIfScanRunning(string phase, string summary)
+        _logger.Info(
+            $"[MusicStrmExtract] [Repair] 删除陈旧 MusicAlbum={staleAlbums.Count}, 排队刷新 .strm={toRefresh.Count}");
+        progress?.Report("修复完成。");
+        return $"已删除 {staleAlbums.Count} 个陈旧 MusicAlbum，已排队刷新 {toRefresh.Count} 个 .strm。";
+    }
+
+    private string? AbortIfScanRunning(string phase, string summary)
+    {
+        if (!_isScanRunning())
         {
-            if (!_isScanRunning())
-            {
-                return null;
-            }
-
-            _logger.Info(
-                $"[MusicStrmExtract] [Repair] 媒体库扫描已开始，{phase}：{summary}");
-            return $"媒体库扫描已开始，修复已中止（{summary}）。";
+            return null;
         }
 
-        private static InternalItemsQuery CreateItemQuery(string itemType)
+        _logger.Info(
+            $"[MusicStrmExtract] [Repair] 媒体库扫描已开始，{phase}：{summary}");
+        return $"媒体库扫描已开始，修复已中止（{summary}）。";
+    }
+
+    private static InternalItemsQuery CreateItemQuery(string itemType)
+    {
+        return new InternalItemsQuery
         {
-            return new InternalItemsQuery
-            {
-                Recursive = true,
-                IncludeItemTypes = new[] { itemType }
-            };
-        }
+            Recursive = true,
+            IncludeItemTypes = [itemType]
+        };
+    }
 
-        private static bool HasMusicBrainzAlbum(BaseItem item)
-        {
-            return item.ProviderIds != null
-                && item.ProviderIds.TryGetValue(PluginConstants.MusicBrainzAlbum, out var id)
-                && !string.IsNullOrWhiteSpace(id);
-        }
+    private static bool HasMusicBrainzAlbum(BaseItem item)
+    {
+        return item.ProviderIds != null
+            && item.ProviderIds.TryGetValue(PluginConstants.MusicBrainzAlbum, out var id)
+            && !string.IsNullOrWhiteSpace(id);
     }
 }

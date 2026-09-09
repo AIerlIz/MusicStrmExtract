@@ -1,136 +1,131 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
+namespace MusicStrmExtract.Online;
 
-namespace MusicStrmExtract.Online
+/// <summary>把本地碟组映射到 release media，并判断布局是否完全命中。</summary>
+internal static class ReleaseLayoutMatcher
 {
-    /// <summary>把本地碟组映射到 release media，并判断布局是否完全命中。</summary>
-    internal static class ReleaseLayoutMatcher
+    /// <summary>
+    /// 把本地碟组映射到 release 的 media:
+    ///   只映射音频 media(VCD/DVD 等视频 bonus 不参与),带碟号的组按 media.Position
+    ///   一一对应并校验轨号覆盖,失败即整张未命中;
+    ///   无碟号的组在剩余 media 中取 Position 最小且覆盖轨号者(单碟保持原行为)。
+    /// 任一碟组无法映射时返回 null,避免产生半对半错的专辑。
+    /// </summary>
+    public static Dictionary<LocalDisc, ReleaseMedia>? MapLocalDiscsToMedias(
+        IReadOnlyList<LocalDisc> localDiscs,
+        IReadOnlyList<ReleaseMedia> medias)
     {
-        /// <summary>
-        /// 把本地碟组映射到 release 的 media:
-        ///   只映射音频 media(VCD/DVD 等视频 bonus 不参与),带碟号的组按 media.Position
-        ///   一一对应并校验轨号覆盖,失败即整张未命中;
-        ///   无碟号的组在剩余 media 中取 Position 最小且覆盖轨号者(单碟保持原行为)。
-        /// 任一碟组无法映射时返回 null,避免产生半对半错的专辑。
-        /// </summary>
-        public static Dictionary<LocalDisc, ReleaseMedia>? MapLocalDiscsToMedias(
-            IReadOnlyList<LocalDisc> localDiscs,
-            IReadOnlyList<ReleaseMedia> medias)
+        if (localDiscs is null || localDiscs.Count == 0 || medias is null || medias.Count == 0)
+            return null;
+
+        var audioMedias = medias
+            .Where(m => !IsVideoMedia(m.Format))
+            .ToList();
+        if (audioMedias.Count == 0)
+            return null;
+
+        var explicitGroups = localDiscs
+            .Where(d => d.DiscNumber is > 0)
+            .OrderBy(d => d.DiscNumber!.Value)
+            .ToList();
+        var implicitGroups = localDiscs
+            .Where(d => d.DiscNumber is not > 0)
+            .ToList();
+
+        var usedPositions = new HashSet<int>();
+        var map = new Dictionary<LocalDisc, ReleaseMedia>();
+
+        foreach (var group in explicitGroups)
         {
-            if (localDiscs is null || localDiscs.Count == 0 || medias is null || medias.Count == 0)
+            var media = audioMedias.FirstOrDefault(m => m.Position == group.DiscNumber!.Value);
+            if (media is null || !usedPositions.Add(media.Position) || !Covers(media, group.TrackNumbers))
                 return null;
 
-            var audioMedias = medias
-                .Where(m => !IsVideoMedia(m.Format))
-                .ToList();
-            if (audioMedias.Count == 0)
+            map.Add(group, media);
+        }
+
+        var remaining = audioMedias
+            .Where(m => !usedPositions.Contains(m.Position))
+            .OrderBy(m => m.Position)
+            .ToList();
+        foreach (var group in implicitGroups.OrderByDescending(g => g.TrackNumbers.Count))
+        {
+            var media = remaining.FirstOrDefault(m => Covers(m, group.TrackNumbers));
+            if (media is null)
                 return null;
 
-            var explicitGroups = localDiscs
-                .Where(d => d.DiscNumber is > 0)
-                .OrderBy(d => d.DiscNumber!.Value)
-                .ToList();
-            var implicitGroups = localDiscs
-                .Where(d => d.DiscNumber is not > 0)
-                .ToList();
-
-            var usedPositions = new HashSet<int>();
-            var map = new Dictionary<LocalDisc, ReleaseMedia>();
-
-            foreach (var group in explicitGroups)
-            {
-                var media = audioMedias.FirstOrDefault(m => m.Position == group.DiscNumber!.Value);
-                if (media is null || !usedPositions.Add(media.Position) || !Covers(media, group.TrackNumbers))
-                    return null;
-
-                map.Add(group, media);
-            }
-
-            var remaining = audioMedias
-                .Where(m => !usedPositions.Contains(m.Position))
-                .OrderBy(m => m.Position)
-                .ToList();
-            foreach (var group in implicitGroups.OrderByDescending(g => g.TrackNumbers.Count))
-            {
-                var media = remaining.FirstOrDefault(m => Covers(m, group.TrackNumbers));
-                if (media is null)
-                    return null;
-
-                remaining.Remove(media);
-                map.Add(group, media);
-            }
-
-            return map;
+            remaining.Remove(media);
+            map.Add(group, media);
         }
 
-        private static readonly string[] VideoMediaFormats =
-        {
-            "VCD",
-            "DVD",
-            "Blu-ray",
-            "HD DVD",
-            "HD-DVD",
-            "UMD"
-        };
-
-        /// <summary>VCD/DVD/Blu-ray 等视频 bonus media 不参与音频轨 exact 计数。</summary>
-        internal static bool IsVideoMedia(string? format)
-        {
-            return !string.IsNullOrWhiteSpace(format)
-                && VideoMediaFormats.Contains(format, StringComparer.OrdinalIgnoreCase);
-        }
-
-        /// <summary>本地碟组与 release 音频 media 的轨数是否逐碟完全一致，且本地消费了全部音频 media。</summary>
-        public static bool HasExactTrackCount(
-            IReadOnlyList<LocalDisc> localDiscs,
-            IReadOnlyDictionary<LocalDisc, ReleaseMedia> mapping,
-            IReadOnlyList<ReleaseMedia> medias)
-        {
-            var requiredMediaCount = medias?.Count(m => !IsVideoMedia(m.Format)) ?? 0;
-            if (localDiscs is null || localDiscs.Count == 0
-                || mapping is null || mapping.Count == 0
-                || mapping.Count != requiredMediaCount)
-                return false;
-
-            foreach (var pair in mapping)
-            {
-                if (pair.Key.TrackNumbers.Count != pair.Value.Tracks.Count)
-                    return false;
-            }
-
-            return true;
-        }
-
-        /// <summary>
-        /// 一次完成“本地碟组 → 音频 media”映射与轨数 exact 判定。
-        /// 返回 null 表示布局无法映射;非 null 时 Mapping 始终可用,IsExact 决定是否可提前选版。
-        /// </summary>
-        public static ReleaseLayoutMatch? TryMatch(
-            IReadOnlyList<LocalDisc> localDiscs,
-            IReadOnlyList<ReleaseMedia> medias)
-        {
-            var mapping = MapLocalDiscsToMedias(localDiscs, medias);
-            if (mapping is null)
-                return null;
-
-            return new ReleaseLayoutMatch(
-                mapping,
-                HasExactTrackCount(localDiscs, mapping, medias));
-        }
-
-        private static bool Covers(ReleaseMedia media, IReadOnlyCollection<int> trackNumbers)
-        {
-            var mediaNumbers = media.Tracks
-                .Select(t => t.Number)
-                .Where(n => n > 0)
-                .ToHashSet();
-            return trackNumbers.Where(n => n > 0).All(mediaNumbers.Contains);
-        }
+        return map;
     }
 
-    /// <summary>本地碟组与 release 音频 media 的映射结果,IsExact 表示每碟轨数完全一致。</summary>
-    internal sealed record ReleaseLayoutMatch(
-        IReadOnlyDictionary<LocalDisc, ReleaseMedia> Mapping,
-        bool IsExact);
+    private static readonly string[] s_videoMediaFormats =
+    [
+        "VCD",
+        "DVD",
+        "Blu-ray",
+        "HD DVD",
+        "HD-DVD",
+        "UMD"
+    ];
+
+    /// <summary>VCD/DVD/Blu-ray 等视频 bonus media 不参与音频轨 exact 计数。</summary>
+    internal static bool IsVideoMedia(string? format)
+    {
+        return !string.IsNullOrWhiteSpace(format)
+            && s_videoMediaFormats.Contains(format, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>本地碟组与 release 音频 media 的轨数是否逐碟完全一致，且本地消费了全部音频 media。</summary>
+    public static bool HasExactTrackCount(
+        IReadOnlyList<LocalDisc> localDiscs,
+        IReadOnlyDictionary<LocalDisc, ReleaseMedia> mapping,
+        IReadOnlyList<ReleaseMedia> medias)
+    {
+        var requiredMediaCount = medias?.Count(m => !IsVideoMedia(m.Format)) ?? 0;
+        if (localDiscs is null || localDiscs.Count == 0
+            || mapping is null || mapping.Count == 0
+            || mapping.Count != requiredMediaCount)
+            return false;
+
+        foreach (var pair in mapping)
+        {
+            if (pair.Key.TrackNumbers.Count != pair.Value.Tracks.Count)
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 一次完成"本地碟组 → 音频 media"映射与轨数 exact 判定。
+    /// 返回 null 表示布局无法映射;非 null 时 Mapping 始终可用,IsExact 决定是否可提前选版。
+    /// </summary>
+    public static ReleaseLayoutMatch? TryMatch(
+        IReadOnlyList<LocalDisc> localDiscs,
+        IReadOnlyList<ReleaseMedia> medias)
+    {
+        var mapping = MapLocalDiscsToMedias(localDiscs, medias);
+        if (mapping is null)
+            return null;
+
+        return new ReleaseLayoutMatch(
+            mapping,
+            HasExactTrackCount(localDiscs, mapping, medias));
+    }
+
+    private static bool Covers(ReleaseMedia media, IReadOnlyCollection<int> trackNumbers)
+    {
+        var mediaNumbers = media.Tracks
+            .Select(t => t.Number)
+            .Where(n => n > 0)
+            .ToHashSet();
+        return trackNumbers.Where(n => n > 0).All(mediaNumbers.Contains);
+    }
 }
+
+/// <summary>本地碟组与 release 音频 media 的映射结果,IsExact 表示每碟轨数完全一致。</summary>
+internal sealed record ReleaseLayoutMatch(
+    IReadOnlyDictionary<LocalDisc, ReleaseMedia> Mapping,
+    bool IsExact);
