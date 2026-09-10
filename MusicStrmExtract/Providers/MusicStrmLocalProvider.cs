@@ -21,6 +21,7 @@ public sealed class MusicStrmLocalProvider : ILocalMetadataProvider<Audio>
 {
     private readonly ILogger _logger;
     private readonly IAlbumResolutionService _albumResolutionService;
+    private readonly IAlbumDirectoryScanService _albumDirectoryScanService;
     private readonly IMusicStrmConfigurationSource _configurationSource;
 
     public MusicStrmLocalProvider(ILogManager logManager)
@@ -28,19 +29,23 @@ public sealed class MusicStrmLocalProvider : ILocalMetadataProvider<Audio>
             (logManager ?? throw new ArgumentNullException(nameof(logManager)))
                 .GetLogger("MusicStrmExtract"),
             MusicStrmConfigurationSource.Default,
-            albumResolutionService: null)
+            albumResolutionService: null,
+            albumDirectoryScanService: null)
     {
     }
 
     internal MusicStrmLocalProvider(
         ILogger logger,
         IMusicStrmConfigurationSource configurationSource,
-        IAlbumResolutionService? albumResolutionService = null)
+        IAlbumResolutionService? albumResolutionService = null,
+        IAlbumDirectoryScanService? albumDirectoryScanService = null)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _configurationSource = configurationSource ?? throw new ArgumentNullException(nameof(configurationSource));
         _albumResolutionService = albumResolutionService
             ?? MusicStrmRuntime.CreateAlbumResolutionService(_logger);
+        _albumDirectoryScanService = albumDirectoryScanService
+            ?? MusicStrmRuntime.CreateAlbumDirectoryScanService();
     }
 
     public string Name => "Music Strm Extract";
@@ -86,7 +91,7 @@ public sealed class MusicStrmLocalProvider : ILocalMetadataProvider<Audio>
         if (rawTrackNumber <= 0)
             return false; // 本文件无轨号,无法按轨取数
 
-        var scan = AlbumDirectoryScanner.Scan(albumDir, message => _logger.Warn(message));
+        var scan = _albumDirectoryScanService.GetOrScan(albumDir, message => _logger.Warn(message));
         if (scan.Discs.Count == 0)
             return false;
 

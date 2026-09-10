@@ -1,7 +1,6 @@
 using MediaBrowser.Model.Logging;
 using MusicStrmExtract.Caching;
 using MusicStrmExtract.Online;
-using System.Collections.Concurrent;
 using System.Globalization;
 
 namespace MusicStrmExtract.Providers;
@@ -15,7 +14,8 @@ internal sealed class AlbumTrackMapLocator : IAlbumResolutionService
     private readonly ILogger _logger;
     private readonly TtlCache<AlbumSearchResult> _cache;
     private readonly Func<string?, IMusicBrainzApi> _apiFactory;
-    private readonly ConcurrentDictionary<string, Task<AlbumSearchResult>> _inflight =
+    private readonly object _inflightGate = new();
+    private readonly Dictionary<string, SharedSearch> _inflight =
         new(StringComparer.Ordinal);
 
     public AlbumTrackMapLocator(ILogger logger, TtlCache<AlbumSearchResult> cache)
@@ -66,29 +66,64 @@ internal sealed class AlbumTrackMapLocator : IAlbumResolutionService
         if (_cache.TryGet(cacheKey, out var cached))
             return cached;
 
-        var task = _inflight.GetOrAdd(cacheKey, _ => SearchCoreAsync(
-            cacheKey,
-            albumFolder,
-            artistFolder,
-            localDiscs,
-            musicBrainzBaseUrl,
-            CancellationToken.None));
-        _ = task.ContinueWith(
-            _ => _inflight.TryRemove(
-                new KeyValuePair<string, Task<AlbumSearchResult>>(cacheKey, task)),
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
+        SharedSearch search;
+        lock (_inflightGate)
+        {
+            if (!_inflight.TryGetValue(cacheKey, out search!))
+            {
+                SharedSearch? created = null;
+                created = new SharedSearch(
+                    token => SearchCoreAsync(
+                        cacheKey,
+                        albumFolder,
+                        artistFolder,
+                        localDiscs,
+                        musicBrainzBaseUrl,
+                        token),
+                    () => RemoveInflight(cacheKey, created!));
+                search = created;
+                _inflight.Add(cacheKey, search);
+                search.AddWaiter();
+                search.Start();
+            }
+            else
+            {
+                search.AddWaiter();
+            }
+        }
+
         try
         {
-            return await task.WaitAsync(ct).ConfigureAwait(false);
+            return await search.Task.WaitAsync(ct).ConfigureAwait(false);
         }
         finally
         {
-            if (task.IsCompleted)
+            var cancelLastWaiter = false;
+            lock (_inflightGate)
             {
-                _ = _inflight.TryRemove(
-                    new KeyValuePair<string, Task<AlbumSearchResult>>(cacheKey, task));
+                search.RemoveWaiter();
+                if (search.CanCancel
+                    && _inflight.TryGetValue(cacheKey, out var currentSearch)
+                    && ReferenceEquals(currentSearch, search))
+                {
+                    _ = _inflight.Remove(cacheKey);
+                    cancelLastWaiter = true;
+                }
+            }
+
+            if (cancelLastWaiter)
+                search.Cancel();
+        }
+    }
+
+    private void RemoveInflight(string cacheKey, SharedSearch search)
+    {
+        lock (_inflightGate)
+        {
+            if (_inflight.TryGetValue(cacheKey, out var currentSearch)
+                && ReferenceEquals(currentSearch, search))
+            {
+                _ = _inflight.Remove(cacheKey);
             }
         }
     }
@@ -134,5 +169,78 @@ internal sealed class AlbumTrackMapLocator : IAlbumResolutionService
 
         // 服务地址也进 key:切换镜像后不应继续命中旧镜像缓存的专辑定位结果。
         return $"{albumFolder}|{artistFolder}|{layout}|{musicBrainzSource}";
+    }
+
+    private sealed class SharedSearch : IDisposable
+    {
+        private readonly CancellationTokenSource _cts = new();
+        private readonly Func<CancellationToken, Task<AlbumSearchResult>> _search;
+        private readonly Action _onCompleted;
+        private Task<AlbumSearchResult>? _task;
+        private int _waiters;
+
+        public SharedSearch(
+            Func<CancellationToken, Task<AlbumSearchResult>> search,
+            Action onCompleted)
+        {
+            _search = search ?? throw new ArgumentNullException(nameof(search));
+            _onCompleted = onCompleted ?? throw new ArgumentNullException(nameof(onCompleted));
+        }
+
+        public Task<AlbumSearchResult> Task =>
+            _task ?? throw new InvalidOperationException("Shared search has not been started.");
+
+        public bool CanCancel => _waiters == 0 && _task is { IsCompleted: false };
+
+        public void Start()
+        {
+            if (_task is not null)
+                throw new InvalidOperationException("Shared search has already been started.");
+
+            _task = RunAsync();
+        }
+
+        public void AddWaiter()
+        {
+            _waiters++;
+        }
+
+        public void RemoveWaiter()
+        {
+            if (_waiters <= 0)
+                throw new InvalidOperationException("No shared search waiter to remove.");
+
+            _waiters--;
+        }
+
+        public void Cancel()
+        {
+            try
+            {
+                _cts.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The shared work completed between the last-waiter check and cancellation.
+            }
+        }
+
+        public void Dispose()
+        {
+            _cts.Dispose();
+        }
+
+        private async Task<AlbumSearchResult> RunAsync()
+        {
+            try
+            {
+                return await _search(_cts.Token).ConfigureAwait(false);
+            }
+            finally
+            {
+                _onCompleted();
+                Dispose();
+            }
+        }
     }
 }

@@ -11,12 +11,21 @@ namespace MusicStrmExtract;
 internal static class MusicStrmRuntime
 {
     private const int CacheMaxEntries = 500;
+    private static readonly TimeSpan s_albumScanTtl = TimeSpan.FromSeconds(30);
 
     private static readonly TtlCache<AlbumSearchResult> s_albumCache =
         new(TimeSpan.FromMinutes(30), CacheMaxEntries);
 
+    private static readonly TtlCache<AlbumDirectoryScan> s_albumScanCache =
+        new(s_albumScanTtl, CacheMaxEntries);
+
     public static IAlbumResolutionService CreateAlbumResolutionService(ILogger logger)
     {
         return new AlbumTrackMapLocator(logger, s_albumCache);
+    }
+
+    public static IAlbumDirectoryScanService CreateAlbumDirectoryScanService()
+    {
+        return new AlbumDirectoryScanService(s_albumScanCache);
     }
 }
