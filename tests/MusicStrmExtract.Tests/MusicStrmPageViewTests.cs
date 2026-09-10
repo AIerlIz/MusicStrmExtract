@@ -88,10 +88,35 @@ namespace MusicStrmExtract.Tests
                 TimeSpan.FromSeconds(2));
         }
 
+        [Fact]
+        public async Task RunCommand_PageSavePersistsEditedMusicBrainzBaseUrl()
+        {
+            var cacheManager = new PluginCacheManager(
+                new TtlCache<AlbumSearchResult>(TimeSpan.FromMinutes(30), 10),
+                new TtlCache<AlbumDirectoryScan>(TimeSpan.FromMinutes(1), 10));
+            PluginConfiguration? saved = null;
+            var view = CreateView(
+                cacheManager,
+                new ResolutionDiagnosticsStore(),
+                loadOptions: () => new PluginConfiguration
+                {
+                    MusicBrainzBaseUrl = "https://old.example"
+                },
+                saveOptions: options => saved = options);
+            view.ContentData.MusicBrainzBaseUrl = "https://musicbrainz.emby.tv";
+
+            _ = await view.RunCommand(string.Empty, "PageSave", string.Empty);
+
+            Assert.NotNull(saved);
+            Assert.Equal("https://musicbrainz.emby.tv", saved.MusicBrainzBaseUrl);
+        }
+
         private static MusicStrmPageView CreateView(
             PluginCacheManager cacheManager,
             ResolutionDiagnosticsStore diagnostics,
-            MusicBrainzSourceCheckService? sourceCheckService = null)
+            MusicBrainzSourceCheckService? sourceCheckService = null,
+            Func<PluginConfiguration>? loadOptions = null,
+            Action<PluginConfiguration>? saveOptions = null)
         {
             var repairService = new LegacyAlbumRepairService(
                 CreateLogger(),
@@ -101,12 +126,14 @@ namespace MusicStrmExtract.Tests
                 _ => { },
                 (_, _) => { });
             sourceCheckService ??= new MusicBrainzSourceCheckService(_ => new UnusedApi());
+            loadOptions ??= () => new PluginConfiguration();
+            saveOptions ??= _ => { };
 
             return new MusicStrmPageView(
                 "plugin",
                 new MusicStrmPageOptions(),
-                () => new PluginConfiguration(),
-                _ => { },
+                loadOptions,
+                saveOptions,
                 repairService,
                 cacheManager,
                 diagnostics,

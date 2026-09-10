@@ -82,6 +82,11 @@ internal sealed class MusicStrmPageView : IPluginPageView, IDisposable
 
     public Task<IPluginUIView> RunCommand(string itemId, string commandId, string data)
     {
+        if (string.Equals(commandId, "PageSave", StringComparison.Ordinal))
+        {
+            return OnSaveCommand(itemId, commandId, data);
+        }
+
         if (string.Equals(commandId, MusicStrmPageOptions.RepairCommand, StringComparison.Ordinal))
         {
             if (!_repairRunner.TryStart("旧库专辑关系修复已开始，正在读取媒体库..."))
@@ -107,6 +112,10 @@ internal sealed class MusicStrmPageView : IPluginPageView, IDisposable
         else if (string.Equals(commandId, MusicStrmPageOptions.RefreshDiagnosticsCommand, StringComparison.Ordinal))
         {
             RefreshDiagnostics();
+        }
+        else
+        {
+            return Task.FromResult<IPluginUIView>(null!);
         }
 
         RaiseInfoChanged();
