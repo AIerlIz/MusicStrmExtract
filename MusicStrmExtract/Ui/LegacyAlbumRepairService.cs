@@ -12,7 +12,7 @@ namespace MusicStrmExtract.Ui;
 /// 保守修复:只清理无 MusicBrainzAlbum、无文件路径、且没有任何 Audio 通过 AlbumId 引用的 MusicAlbum,
 /// 随后把 MusicBrainzAlbum 已存在但 AlbumId 缺失，或 AlbumId 指向陈旧专辑的 .strm 加入刷新队列。
 /// </summary>
-internal sealed class StaleMusicAlbumRepairService
+internal sealed class LegacyAlbumRepairService
 {
     private const string ScanRunningMessage =
         "媒体库扫描正在运行，请等待扫描结束后再执行修复。";
@@ -23,7 +23,7 @@ internal sealed class StaleMusicAlbumRepairService
     private readonly RepairExecutor _repairExecutor;
     private int _isRunning;
 
-    public StaleMusicAlbumRepairService(
+    public LegacyAlbumRepairService(
         ILogManager logManager,
         ILibraryManager libraryManager,
         IProviderManager providerManager,
@@ -50,7 +50,7 @@ internal sealed class StaleMusicAlbumRepairService
             fileSystem);
     }
 
-    internal StaleMusicAlbumRepairService(
+    internal LegacyAlbumRepairService(
         ILogger logger,
         Func<bool> isScanRunning,
         Func<IReadOnlyList<Audio>> getAudios,

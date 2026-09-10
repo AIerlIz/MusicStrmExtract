@@ -17,7 +17,7 @@ internal sealed class MusicStrmPageView : IPluginPageView, IDisposable
         MusicStrmPageOptions contentData,
         Func<PluginConfiguration> loadOptions,
         Action<PluginConfiguration> saveOptions,
-        StaleMusicAlbumRepairService repairService)
+        LegacyAlbumRepairService repairService)
     {
         PluginId = pluginId;
         ContentData = contentData;

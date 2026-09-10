@@ -12,7 +12,7 @@ internal sealed class MusicStrmPageController : IPluginUIPageController
     private readonly string _pluginId;
     private readonly Func<PluginConfiguration> _loadOptions;
     private readonly Action<PluginConfiguration> _saveOptions;
-    private readonly StaleMusicAlbumRepairService _repairService;
+    private readonly LegacyAlbumRepairService _legacyRepairService;
 
     public MusicStrmPageController(
         IApplicationHost applicationHost,
@@ -23,7 +23,7 @@ internal sealed class MusicStrmPageController : IPluginUIPageController
         _pluginId = pluginId;
         _loadOptions = loadOptions;
         _saveOptions = saveOptions;
-        _repairService = new StaleMusicAlbumRepairService(
+        _legacyRepairService = new LegacyAlbumRepairService(
             applicationHost.Resolve<ILogManager>(),
             applicationHost.Resolve<MediaBrowser.Controller.Library.ILibraryManager>(),
             applicationHost.Resolve<MediaBrowser.Controller.Providers.IProviderManager>(),
@@ -55,6 +55,6 @@ internal sealed class MusicStrmPageController : IPluginUIPageController
             options,
             _loadOptions,
             _saveOptions,
-            _repairService));
+            _legacyRepairService));
     }
 }

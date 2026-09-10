@@ -114,7 +114,7 @@ Music Strm Extract 是 Emby 的本地元数据读取器插件，专门为音乐�
 2. 在 `Music Strm Extract` 上点击“设置”。
 3. 修改配置后保存，不需要重启 Emby。
 
-设置页还提供“运行旧库修复”按钮，用于删除未被 Audio 引用且缺少 MusicBrainzAlbum 的陈旧 MusicAlbum，并刷新相关 `.strm`。
+设置页还提供“修复旧库专辑关系”按钮，用于删除无路径、无 MusicBrainzAlbum 且未被 Audio 引用的陈旧 MusicAlbum，并刷新缺失或陈旧专辑关联的 `.strm`。
 
 | 配置项 | 默认值 | 说明 |
 |---|---|---|

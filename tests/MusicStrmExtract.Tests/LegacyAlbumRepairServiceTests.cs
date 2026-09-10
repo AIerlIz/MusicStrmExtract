@@ -14,7 +14,7 @@ using Xunit;
 
 namespace MusicStrmExtract.Tests
 {
-    public class StaleMusicAlbumRepairServiceTests
+    public class LegacyAlbumRepairServiceTests
     {
         [Fact]
         public void Run_DeletesOnlyStaleAlbum()
@@ -133,10 +133,10 @@ namespace MusicStrmExtract.Tests
             Assert.Single(context.Queued);
         }
 
-        private static StaleMusicAlbumRepairService CreateService(RepairContext context)
+        private static LegacyAlbumRepairService CreateService(RepairContext context)
         {
             var logger = DispatchProxy.Create<ILogger, NoOpLogger>();
-            return new StaleMusicAlbumRepairService(
+            return new LegacyAlbumRepairService(
                 logger,
                 () => context.IsScanRunning,
                 () => context.Audios,

@@ -2,7 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace MusicStrmExtract.Ui;
 
-/// <summary>负责旧库修复后台任务的生命周期、防重入、取消和进度回写。</summary>
+/// <summary>负责旧库专辑关系修复后台任务的生命周期、防重入、取消和进度回写。</summary>
 internal sealed class RepairJobRunner : IDisposable
 {
     private readonly Func<IProgress<string>?, CancellationToken, string> _run;
