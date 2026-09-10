@@ -55,6 +55,9 @@ internal sealed class MusicStrmPageController : IPluginUIPageController
             options,
             _loadOptions,
             _saveOptions,
-            _legacyRepairService));
+            _legacyRepairService,
+            MusicStrmRuntime.CacheManager,
+            MusicStrmRuntime.Diagnostics,
+            MusicStrmRuntime.SourceCheckService));
     }
 }

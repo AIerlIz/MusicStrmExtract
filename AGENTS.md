@@ -32,6 +32,7 @@
 ### 配置页运行按钮
 - `Plugin` 仍继承 `BasePluginSimpleUI<PluginConfiguration>` 负责 JSON 配置存储，并在类声明中显式列出 `IHasUIPages`，通过公开的 `UIPageControllers` 属性重实现接口，覆盖基类的 Simple UI 页面；只写属性而不重新声明接口不会生效。
 - 配置页按钮命令由 `MusicStrmPageView.RunCommand` 转发到 `LegacyAlbumRepairService`；不要在 Provider 链路里直接调用修复逻辑。
+- 配置页还包含 `ClearPluginCache`、`CheckMusicBrainzSource`、`RefreshResolutionDiagnostics` 命令，分别操作插件自有缓存、MusicBrainz 来源检查和进程内定位诊断；这些功能不得修改 Emby 媒体库数据。
 - 修复只删除无 `MusicBrainzAlbum`、无文件路径、且未被任何 Audio `AlbumId` 引用的 `MusicAlbum`，随后排队刷新相关 `.strm`；不要改成无确认地批量删库。
 - 页面新增按钮时，确认 `ButtonItem.CommandId` 与 `MusicStrmPageView.RunCommand` 的分支一致。
 
@@ -50,6 +51,6 @@
 - 涉及新增 MusicBrainz 请求入口时统一走 `GetJsonRootAsync`，不要绕过缓存与限流直接发 `HttpClient`；测试中注入 `IHttpTransport` / `IRequestGate`。
 
 ### 发版与验证
-- 项目版本号需要手动同步：发新 tag 前更新 `MusicStrmExtract.csproj` 的 `Version`、`AssemblyVersion`、`FileVersion`。当前已同步为 `1.8.3.0`。
+- 项目版本号需要手动同步：发新 tag 前更新 `MusicStrmExtract.csproj` 的 `Version`、`AssemblyVersion`、`FileVersion`。当前已同步为 `1.8.4.0`。
 - 常规验证命令：`dotnet test tests\MusicStrmExtract.Tests\MusicStrmExtract.Tests.csproj -c Release --no-restore --nologo`。
 - 涉及选版、直写或刷新流程的改动，发布前建议连接 Emby Server 跑一次媒体库刷新。

@@ -2,34 +2,39 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace MusicStrmExtract.Ui;
 
-/// <summary>负责旧库专辑关系修复后台任务的生命周期、防重入、取消和进度回写。</summary>
-internal sealed class RepairJobRunner : IDisposable
+/// <summary>负责配置页后台任务的生命周期、防重入、取消和进度回写。</summary>
+internal sealed class BackgroundJobRunner : IDisposable
 {
-    private readonly Func<IProgress<string>?, CancellationToken, string> _run;
+    private readonly Func<IProgress<string>?, CancellationToken, Task<string>> _run;
     private readonly Action<string> _report;
+    private readonly string _failurePrefix;
     private CancellationTokenSource? _cts;
     private Task? _completion;
     private int _running;
 
-    public RepairJobRunner(
-        Func<IProgress<string>?, CancellationToken, string> run,
-        Action<string> report)
+    public BackgroundJobRunner(
+        Func<IProgress<string>?, CancellationToken, Task<string>> run,
+        Action<string> report,
+        string failurePrefix)
     {
         _run = run ?? throw new ArgumentNullException(nameof(run));
         _report = report ?? throw new ArgumentNullException(nameof(report));
+        _failurePrefix = failurePrefix ?? throw new ArgumentNullException(nameof(failurePrefix));
     }
 
     internal Task? Completion => _completion;
 
-    public bool TryStart()
+    public bool TryStart(string startMessage)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(startMessage);
+
         if (Interlocked.CompareExchange(ref _running, 1, 0) != 0)
             return false;
 
         _cts?.Dispose();
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
-        _report("修复已开始，正在读取媒体库...");
+        _report(startMessage);
         _completion = Task.Run(() => RunCore(ct), CancellationToken.None);
         return true;
     }
@@ -54,7 +59,7 @@ internal sealed class RepairJobRunner : IDisposable
         "Design",
         "CA1031:Do not catch general exception types",
         Justification = "A background UI command must surface unexpected failures without crashing the server process.")]
-    private void RunCore(CancellationToken ct)
+    private async Task RunCore(CancellationToken ct)
     {
         try
         {
@@ -64,7 +69,7 @@ internal sealed class RepairJobRunner : IDisposable
                     _report(message);
             });
 
-            var result = _run(progress, ct);
+            var result = await _run(progress, ct).ConfigureAwait(false);
             if (!ct.IsCancellationRequested)
                 _report(result);
         }
@@ -74,7 +79,7 @@ internal sealed class RepairJobRunner : IDisposable
         catch (Exception ex)
         {
             if (!ct.IsCancellationRequested)
-                _report("修复失败: " + ex.Message);
+                _report($"{_failurePrefix}: {ex.Message}");
         }
         finally
         {

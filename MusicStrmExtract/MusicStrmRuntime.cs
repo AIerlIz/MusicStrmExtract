@@ -19,9 +19,27 @@ internal static class MusicStrmRuntime
     private static readonly TtlCache<AlbumDirectoryScan> s_albumScanCache =
         new(s_albumScanTtl, CacheMaxEntries);
 
+    private static readonly ResolutionDiagnosticsStore s_diagnostics = new();
+
+    private static readonly PluginCacheManager s_cacheManager =
+        new(s_albumCache, s_albumScanCache);
+
+    private static readonly MusicBrainzSourceCheckService s_sourceCheckService =
+        new(baseUrl => new MusicBrainzApi(baseUrl));
+
+    public static PluginCacheManager CacheManager => s_cacheManager;
+
+    public static ResolutionDiagnosticsStore Diagnostics => s_diagnostics;
+
+    public static MusicBrainzSourceCheckService SourceCheckService => s_sourceCheckService;
+
     public static IAlbumResolutionService CreateAlbumResolutionService(ILogger logger)
     {
-        return new AlbumTrackMapLocator(logger, s_albumCache);
+        return new AlbumTrackMapLocator(
+            logger,
+            s_albumCache,
+            baseUrl => new MusicBrainzApi(baseUrl),
+            s_diagnostics);
     }
 
     public static IAlbumDirectoryScanService CreateAlbumDirectoryScanService()

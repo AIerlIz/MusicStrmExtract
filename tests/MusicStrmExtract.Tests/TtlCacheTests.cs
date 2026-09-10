@@ -53,5 +53,19 @@ namespace MusicStrmExtract.Tests
             Assert.Equal("2", fresh);
             Assert.Equal(1, cache.Count);
         }
+
+        [Fact]
+        public void Clear_RemovesAllEntries()
+        {
+            var cache = new TtlCache<string>(TimeSpan.FromMinutes(1), 10);
+            cache.Set("a", "A");
+            cache.Set("b", "B");
+
+            cache.Clear();
+
+            Assert.Equal(0, cache.Count);
+            Assert.False(cache.TryGet("a", out _));
+            Assert.False(cache.TryGet("b", out _));
+        }
     }
 }

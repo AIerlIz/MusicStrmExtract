@@ -2,6 +2,8 @@ using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Events;
 using MediaBrowser.Model.GenericEdit;
 using MediaBrowser.Model.Plugins.UI.Views;
+using MusicStrmExtract.Online;
+using MusicStrmExtract.Providers;
 
 namespace MusicStrmExtract.Ui;
 
@@ -10,22 +12,39 @@ internal sealed class MusicStrmPageView : IPluginPageView, IDisposable
 {
     private readonly Func<PluginConfiguration> _loadOptions;
     private readonly Action<PluginConfiguration> _saveOptions;
-    private readonly RepairJobRunner _repairRunner;
+    private readonly PluginCacheManager _cacheManager;
+    private readonly ResolutionDiagnosticsStore _diagnostics;
+    private readonly MusicBrainzSourceCheckService _sourceCheckService;
+    private readonly BackgroundJobRunner _repairRunner;
+    private readonly BackgroundJobRunner _sourceCheckRunner;
 
     public MusicStrmPageView(
         string pluginId,
         MusicStrmPageOptions contentData,
         Func<PluginConfiguration> loadOptions,
         Action<PluginConfiguration> saveOptions,
-        LegacyAlbumRepairService repairService)
+        LegacyAlbumRepairService repairService,
+        PluginCacheManager cacheManager,
+        ResolutionDiagnosticsStore diagnostics,
+        MusicBrainzSourceCheckService sourceCheckService)
     {
         PluginId = pluginId;
         ContentData = contentData;
         _loadOptions = loadOptions;
         _saveOptions = saveOptions;
-        _repairRunner = new RepairJobRunner(
-            (progress, ct) => repairService.Run(progress, ct),
-            SetResultLabel);
+        _cacheManager = cacheManager ?? throw new ArgumentNullException(nameof(cacheManager));
+        _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
+        _sourceCheckService = sourceCheckService ?? throw new ArgumentNullException(nameof(sourceCheckService));
+        _repairRunner = new BackgroundJobRunner(
+            (progress, ct) => Task.FromResult(repairService.Run(progress, ct)),
+            SetRepairResultLabel,
+            "旧库专辑关系修复失败");
+        _sourceCheckRunner = new BackgroundJobRunner(
+            (_, ct) => _sourceCheckService.CheckAsync(_loadOptions().MusicBrainzBaseUrl, ct),
+            SetSourceStatusLabel,
+            "MusicBrainz 连接检查失败");
+        RefreshCacheStatus();
+        RefreshDiagnostics();
     }
 
     public MusicStrmPageOptions ContentData { get; set; }
@@ -65,12 +84,29 @@ internal sealed class MusicStrmPageView : IPluginPageView, IDisposable
     {
         if (string.Equals(commandId, MusicStrmPageOptions.RepairCommand, StringComparison.Ordinal))
         {
-            if (!_repairRunner.TryStart())
+            if (!_repairRunner.TryStart("旧库专辑关系修复已开始，正在读取媒体库..."))
             {
                 ContentData.ResultLabel.Text = "修复正在运行，请等待当前任务结束后再执行。";
                 RaiseInfoChanged();
                 return Task.FromResult((IPluginUIView)this);
             }
+        }
+        else if (string.Equals(commandId, MusicStrmPageOptions.ClearCacheCommand, StringComparison.Ordinal))
+        {
+            _cacheManager.Clear();
+            RefreshCacheStatus();
+            RefreshDiagnostics();
+        }
+        else if (string.Equals(commandId, MusicStrmPageOptions.CheckSourceCommand, StringComparison.Ordinal))
+        {
+            if (!_sourceCheckRunner.TryStart("正在检查 MusicBrainz 连接..."))
+            {
+                ContentData.SourceStatusLabel.Text = "连接检查正在运行，请稍候。";
+            }
+        }
+        else if (string.Equals(commandId, MusicStrmPageOptions.RefreshDiagnosticsCommand, StringComparison.Ordinal))
+        {
+            RefreshDiagnostics();
         }
 
         RaiseInfoChanged();
@@ -89,11 +125,13 @@ internal sealed class MusicStrmPageView : IPluginPageView, IDisposable
     public async Task Cancel()
     {
         await _repairRunner.CancelAsync().ConfigureAwait(false);
+        await _sourceCheckRunner.CancelAsync().ConfigureAwait(false);
     }
 
     public void Dispose()
     {
         _repairRunner.Dispose();
+        _sourceCheckRunner.Dispose();
     }
 
     public void OnDialogResult(IPluginUIView dialogView, bool completedOk, object data)
@@ -105,9 +143,27 @@ internal sealed class MusicStrmPageView : IPluginPageView, IDisposable
         UIViewInfoChanged?.Invoke(this, new GenericEventArgs<IPluginUIView>(this));
     }
 
-    private void SetResultLabel(string message)
+    private void SetRepairResultLabel(string message)
     {
         ContentData.ResultLabel.Text = message;
+        RaiseInfoChanged();
+    }
+
+    private void SetSourceStatusLabel(string message)
+    {
+        ContentData.SourceStatusLabel.Text = message;
+        RaiseInfoChanged();
+    }
+
+    private void RefreshCacheStatus()
+    {
+        ContentData.CacheStatusLabel.Text = _cacheManager.GetStatus();
+        RaiseInfoChanged();
+    }
+
+    private void RefreshDiagnostics()
+    {
+        ContentData.DiagnosticsLabel.Text = _diagnostics.GetSummary();
         RaiseInfoChanged();
     }
 }
