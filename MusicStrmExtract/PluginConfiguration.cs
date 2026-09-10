@@ -1,5 +1,6 @@
 using Emby.Web.GenericEdit;
 using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 
 namespace MusicStrmExtract;
 
@@ -12,5 +13,9 @@ public class PluginConfiguration : EditableOptionsBase
 
     [DisplayName("MusicBrainz 服务地址")]
     [Description("留空使用官方 https://musicbrainz.org；官方不稳定时可填写镜像，例如 https://musicbrainz.emby.tv。")]
+    [SuppressMessage(
+        "Design",
+        "CA1056:URI properties should not be strings",
+        Justification = "Emby's editable configuration model serializes this setting as a string.")]
     public string MusicBrainzBaseUrl { get; set; } = string.Empty;
 }

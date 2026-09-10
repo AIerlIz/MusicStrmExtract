@@ -17,10 +17,12 @@ public sealed class AlbumSearch
     private const int SearchCandidateLimit = 10;
 
     private readonly IMusicBrainzApi _api;
+    private readonly ReleaseCandidateEvaluator _candidateEvaluator;
 
     public AlbumSearch(IMusicBrainzApi api)
     {
         _api = api;
+        _candidateEvaluator = new ReleaseCandidateEvaluator(api);
     }
 
     /// <summary>去除专辑名中的年份/附加括号等,得到核心名:"叶惠美 (2003)"→"叶惠美","七里香-2004"→"七里香"。</summary>
@@ -66,7 +68,7 @@ public sealed class AlbumSearch
             scored.Select(s => s.Release).ToList(),
             localDiscs);
 
-        var ordered = OrderSearchCandidates(scored, preferredCountry);
+        var ordered = SearchCandidateOrderingPolicy.Order(scored, preferredCountry);
         var state = new SearchState();
 
         // 尝试用 release-group 下 browse 补齐后的 release 候选分层评分选出最优实体版本;没有 exact 时保留已看到的布局候选,
@@ -81,27 +83,6 @@ public sealed class AlbumSearch
             return rgResult;
 
         return await TryResolveFromOrderedCandidatesAsync(ordered, localDiscs, state, ct).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// 稳定排序:本地目录文本已作为查询条件交给 MB,不再做字形过滤;
-    /// status(Official 0 < Promotional/Unknown 1 < Bootleg/Withdrawn 2 < Pseudo-Release 3) -> 主类型 Album -> 完整日期优先 -> 日期最早
-    /// (空日期排最后)-> 偏好国家 -> score 降序 -> 官方名(字典序)
-    /// </summary>
-    private static List<ScoredRelease> OrderSearchCandidates(
-        List<ScoredRelease> scored,
-        string? preferredCountry)
-    {
-        return scored
-            .OrderBy(s => ReleaseStatusPolicy.SearchPriority(s.Release.Status))
-            .ThenBy(s => string.Equals(s.Release.PrimaryType, "Album", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
-            .ThenBy(s => IsIncompleteDate(s.Release.Date) ? 1 : 0)
-            .ThenBy(s => string.IsNullOrWhiteSpace(s.Release.Date) ? "9999" : s.Release.Date!)
-            .ThenBy(s => string.Equals(s.Release.Country, preferredCountry, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
-            .ThenByDescending(s => s.Score)
-            .ThenBy(s => s.Release.Title!, StringComparer.Ordinal)
-            .ThenBy(s => s.Release.Id ?? string.Empty, StringComparer.Ordinal)
-            .ToList();
     }
 
     /// <summary>
@@ -131,16 +112,16 @@ public sealed class AlbumSearch
 
             foreach (var rankedRelease in ranked)
             {
-                var match = await TryMatchCandidateAsync(
-                    state,
+                var match = await _candidateEvaluator.TryMatchAsync(
                     rankedRelease.Release,
                     localDiscs,
+                    state.EvaluatedReleaseIds,
                     ct).ConfigureAwait(false);
                 if (match is null)
                     continue;
 
                 if (match.IsExact)
-                    return BuildAlbumResult(match.Release, match.Medias, rg);
+                    return AlbumSearchResultFactory.Create(match.Release, match.Medias, rg);
 
                 SetFallback(state, rg, match.Release, match.Medias);
             }
@@ -171,70 +152,21 @@ public sealed class AlbumSearch
     {
         foreach (var scoredRelease in ordered)
         {
-            var match = await TryMatchCandidateAsync(
-                state,
+            var match = await _candidateEvaluator.TryMatchAsync(
                 scoredRelease.Release,
                 localDiscs,
+                state.EvaluatedReleaseIds,
                 ct).ConfigureAwait(false);
             if (match is null)
                 continue;
 
             if (match.IsExact)
-                return BuildAlbumResult(match.Release, match.Medias, null);
+                return AlbumSearchResultFactory.Create(match.Release, match.Medias, null);
 
             SetFallback(state, null, match.Release, match.Medias);
         }
 
         return state.FirstFallback ?? AlbumSearchResult.Empty;
-    }
-
-    /// <summary>
-    /// 拉取一个 release 详情并做本地布局校验;同一 release 在一次搜索内只评估一次。
-    /// 返回 null 表示无可用 media 或布局不匹配;IsExact=false 时仍由调用方决定是否保留 fallback。
-    /// </summary>
-    private async Task<CandidateMatch?> TryMatchCandidateAsync(
-        SearchState state,
-        ReleaseSummary release,
-        IReadOnlyList<LocalDisc> localDiscs,
-        CancellationToken ct)
-    {
-        var releaseId = release.Id;
-        if (string.IsNullOrWhiteSpace(releaseId) || state.EvaluatedReleaseIds.Contains(releaseId))
-            return null;
-
-        var parsed = await _api.GetReleaseAsync(releaseId, ct).ConfigureAwait(false);
-        _ = state.EvaluatedReleaseIds.Add(releaseId);
-        if (parsed.Medias.Count == 0)
-            return null;
-
-        var layout = ReleaseLayoutMatcher.TryMatch(localDiscs, parsed.Medias);
-        if (layout is null)
-            return null;
-
-        return new CandidateMatch(parsed.Release, parsed.Medias, layout.IsExact);
-    }
-
-    private static AlbumSearchResult BuildAlbumResult(
-        ReleaseSummary release,
-        IReadOnlyList<ReleaseMedia> medias,
-        ParsedReleaseGroup? releaseGroup)
-    {
-        var artistCredits = release.ArtistCredits.Count > 0
-            ? release.ArtistCredits
-            : releaseGroup?.ArtistCredits ?? [];
-        return new AlbumSearchResult(
-            true,
-            release.Title ?? releaseGroup?.Title,
-            JsonUtil.ParseYear(release.Date),
-            release.Id,
-            release.ReleaseGroupMbid ?? releaseGroup?.Id,
-            artistCredits
-                .Select(c => c.Name)
-                .FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)),
-            artistCredits
-                .Select(c => c.Id)
-                .FirstOrDefault(id => !string.IsNullOrWhiteSpace(id)),
-            [.. medias]);
     }
 
     private static void SetFallback(
@@ -246,12 +178,7 @@ public sealed class AlbumSearch
         if (state.FirstFallback is not null || string.IsNullOrWhiteSpace(release.Id))
             return;
 
-        state.FirstFallback = BuildAlbumResult(release, medias, releaseGroup);
-    }
-
-    private static bool IsIncompleteDate(string? date)
-    {
-        return !JsonUtil.IsCompleteDate(date);
+        state.FirstFallback = AlbumSearchResultFactory.Create(release, medias, releaseGroup);
     }
 
     private sealed class SearchState
@@ -261,9 +188,4 @@ public sealed class AlbumSearch
         public HashSet<string> EvaluatedReleaseIds { get; } =
             new(StringComparer.OrdinalIgnoreCase);
     }
-
-    private sealed record CandidateMatch(
-        ReleaseSummary Release,
-        IReadOnlyList<ReleaseMedia> Medias,
-        bool IsExact);
 }

@@ -16,8 +16,6 @@ public class EmbyE2eTests
     private static readonly string? EmbyBaseUrl = Environment.GetEnvironmentVariable("EMBY_BASE_URL");
     private static readonly string? EmbyApiKey = Environment.GetEnvironmentVariable("EMBY_API_KEY");
 
-    private static bool SkipIfNoEmby() => string.IsNullOrWhiteSpace(EmbyBaseUrl) || string.IsNullOrWhiteSpace(EmbyApiKey);
-
     private static HttpClient CreateClient()
     {
         var client = new HttpClient { BaseAddress = new Uri(EmbyBaseUrl!) };
@@ -27,10 +25,9 @@ public class EmbyE2eTests
 
     #region Plugin Health
 
-    [Fact]
+    [EmbyFact]
     public async Task Plugin_Should_Be_Installed()
     {
-        if (SkipIfNoEmby()) return;
         using var http = CreateClient();
         var plugins = await http.GetFromJsonAsync<PluginInfo[]>("Plugins")
             ?? throw new InvalidOperationException("No plugins returned");
@@ -41,10 +38,9 @@ public class EmbyE2eTests
         Assert.NotNull(plugin.Version);
     }
 
-    [Fact]
+    [EmbyFact]
     public async Task Plugin_Should_Have_Valid_Version()
     {
-        if (SkipIfNoEmby()) return;
         using var http = CreateClient();
         var plugins = await http.GetFromJsonAsync<PluginInfo[]>("Plugins")
             ?? throw new InvalidOperationException("No plugins returned");
@@ -58,10 +54,9 @@ public class EmbyE2eTests
 
     #region Audio Item Verification
 
-    [Fact]
+    [EmbyFact]
     public async Task Audio_Items_Should_Be_Indexed()
     {
-        if (SkipIfNoEmby()) return;
         using var http = CreateClient();
         var result = await http.GetFromJsonAsync<EmbyPagedResult>(
             "Items?IncludeItemTypes=Audio&Recursive=true&Limit=1&TotalRecordCount=true")
@@ -69,10 +64,9 @@ public class EmbyE2eTests
         Assert.True(result.TotalRecordCount > 0, "No audio items found in the library");
     }
 
-    [Fact]
+    [EmbyFact]
     public async Task Strm_Files_Should_Exist_In_Library()
     {
-        if (SkipIfNoEmby()) return;
         using var http = CreateClient();
         var result = await http.GetFromJsonAsync<EmbyPagedResult>(
             "Items?IncludeItemTypes=Audio&Recursive=true&Limit=10&Fields=Path,Name")
@@ -86,10 +80,9 @@ public class EmbyE2eTests
 
     #region Metadata Refresh
 
-    [Fact]
+    [EmbyFact]
     public async Task Refresh_Single_Item_Should_Return_Success()
     {
-        if (SkipIfNoEmby()) return;
         using var http = CreateClient();
         var result = await http.GetFromJsonAsync<EmbyPagedResult>(
             "Items?IncludeItemTypes=Audio&Recursive=true&Limit=1&Fields=Id")
@@ -101,10 +94,9 @@ public class EmbyE2eTests
         Assert.True(response.IsSuccessStatusCode, $"Refresh failed with status: {response.StatusCode}");
     }
 
-    [Fact]
+    [EmbyFact]
     public async Task Refresh_Strm_Item_Should_Succeed()
     {
-        if (SkipIfNoEmby()) return;
         using var http = CreateClient();
         var r = await http.GetFromJsonAsync<EmbyPagedResult>("Items?IncludeItemTypes=Audio&Recursive=true&Limit=50&Fields=Path,Id"); var result = r ?? new EmbyPagedResult(0, []);
         var strmItem = result.Items.FirstOrDefault(i =>
@@ -124,25 +116,22 @@ public class EmbyE2eTests
 
     #region Library Structure
 
-    [Fact]
+    [EmbyFact]
     public async Task Music_Virtual_Folder_Should_Be_Configured()
     {
-        if (SkipIfNoEmby()) return;
         using var http = CreateClient();
-        var json = await http.GetStringAsync(new Uri(http.BaseAddress, "Library/VirtualFolders?refreshLibrary=false"));
+        var json = await http.GetStringAsync(new Uri(http.BaseAddress!, "Library/VirtualFolders?refreshLibrary=false"));
         var folders = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement[]>(json) ?? [];
         var musicFolders = folders.Where(f => f.GetProperty("CollectionType").GetString() == "music").ToArray();
-        if (musicFolders.Length == 0)
-            Assert.Fail("No music virtual folder found");
-        Assert.Equal("Music", musicFolders[0].GetProperty("Name").GetString());
+        Assert.NotEmpty(musicFolders);
+        Assert.False(string.IsNullOrWhiteSpace(musicFolders[0].GetProperty("Name").GetString()));
     }
 
-    [Fact]
+    [EmbyFact]
     public async Task Music_Folder_Should_Have_At_Least_One_Path()
     {
-        if (SkipIfNoEmby()) return;
         using var http = CreateClient();
-        var json = await http.GetStringAsync(new Uri(http.BaseAddress, "Library/VirtualFolders?refreshLibrary=false"));
+        var json = await http.GetStringAsync(new Uri(http.BaseAddress!, "Library/VirtualFolders?refreshLibrary=false"));
         var folders = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement[]>(json) ?? [];
         var musicFolders = folders.Where(f => f.GetProperty("CollectionType").GetString() == "music").ToArray();
         if (musicFolders.Length == 0)

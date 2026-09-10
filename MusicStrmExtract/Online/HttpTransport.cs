@@ -14,7 +14,7 @@ internal sealed class HttpClientTransport(HttpClient http) : IHttpTransport
     public async Task<HttpResponse> GetAsync(string url, CancellationToken ct)
     {
         using var response = await http
-            .GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct)
+            .GetAsync(new Uri(url, UriKind.Absolute), HttpCompletionOption.ResponseHeadersRead, ct)
             .ConfigureAwait(false);
         var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         return new HttpResponse((int)response.StatusCode, body);

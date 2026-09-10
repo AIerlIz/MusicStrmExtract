@@ -10,9 +10,7 @@ internal sealed class MusicStrmPageView : IPluginPageView, IDisposable
 {
     private readonly Func<PluginConfiguration> _loadOptions;
     private readonly Action<PluginConfiguration> _saveOptions;
-    private readonly StaleMusicAlbumRepairService _repairService;
-    private CancellationTokenSource? _repairCts;
-    private int _repairRunning;
+    private readonly RepairJobRunner _repairRunner;
 
     public MusicStrmPageView(
         string pluginId,
@@ -25,7 +23,9 @@ internal sealed class MusicStrmPageView : IPluginPageView, IDisposable
         ContentData = contentData;
         _loadOptions = loadOptions;
         _saveOptions = saveOptions;
-        _repairService = repairService;
+        _repairRunner = new RepairJobRunner(
+            (progress, ct) => repairService.Run(progress, ct),
+            SetResultLabel);
     }
 
     public MusicStrmPageOptions ContentData { get; set; }
@@ -65,17 +65,12 @@ internal sealed class MusicStrmPageView : IPluginPageView, IDisposable
     {
         if (string.Equals(commandId, MusicStrmPageOptions.RepairCommand, StringComparison.Ordinal))
         {
-            if (Interlocked.CompareExchange(ref _repairRunning, 1, 0) != 0)
+            if (!_repairRunner.TryStart())
             {
                 ContentData.ResultLabel.Text = "修复正在运行，请等待当前任务结束后再执行。";
                 RaiseInfoChanged();
                 return Task.FromResult((IPluginUIView)this);
             }
-
-            _repairCts?.Dispose();
-            _repairCts = new CancellationTokenSource();
-            ContentData.ResultLabel.Text = "修复已开始，正在读取媒体库...";
-            RunRepairInBackground(_repairCts.Token);
         }
 
         RaiseInfoChanged();
@@ -91,17 +86,14 @@ internal sealed class MusicStrmPageView : IPluginPageView, IDisposable
         return Task.FromResult((IPluginUIView)this);
     }
 
-    public Task Cancel()
+    public async Task Cancel()
     {
-        _repairCts?.CancelAsync();
-        _repairCts?.Dispose();
-        _repairCts = null;
-        return Task.CompletedTask;
+        await _repairRunner.CancelAsync().ConfigureAwait(false);
     }
 
     public void Dispose()
     {
-        _ = Cancel();
+        _repairRunner.Dispose();
     }
 
     public void OnDialogResult(IPluginUIView dialogView, bool completedOk, object data)
@@ -113,58 +105,9 @@ internal sealed class MusicStrmPageView : IPluginPageView, IDisposable
         UIViewInfoChanged?.Invoke(this, new GenericEventArgs<IPluginUIView>(this));
     }
 
-    private void RunRepairInBackground(CancellationToken ct)
-    {
-        _ = Task.Run(
-            () =>
-            {
-                try
-                {
-                    var progress = new SynchronousProgress<string>(message =>
-                    {
-                        if (!ct.IsCancellationRequested)
-                        {
-                            SetResultLabel(message);
-                        }
-                    });
-
-                    var result = _repairService.Run(progress, ct);
-                    if (!ct.IsCancellationRequested)
-                    {
-                        SetResultLabel(result);
-                    }
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                }
-                catch (Exception ex)
-                {
-                    if (!ct.IsCancellationRequested)
-                    {
-                        SetResultLabel("修复失败: " + ex.Message);
-                    }
-                }
-                finally
-                {
-                    Interlocked.Exchange(ref _repairRunning, 0);
-                }
-            },
-            CancellationToken.None);
-    }
-
     private void SetResultLabel(string message)
     {
         ContentData.ResultLabel.Text = message;
         RaiseInfoChanged();
-    }
-
-    private sealed class SynchronousProgress<T>(Action<T> handler) : IProgress<T>
-    {
-        private readonly Action<T> _handler = handler ?? throw new ArgumentNullException(nameof(handler));
-
-        public void Report(T value)
-        {
-            _handler(value);
-        }
     }
 }

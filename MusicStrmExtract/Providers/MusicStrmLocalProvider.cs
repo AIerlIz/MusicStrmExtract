@@ -2,7 +2,6 @@ using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Configuration;
 using MediaBrowser.Model.Logging;
-using MusicStrmExtract.Caching;
 using MusicStrmExtract.Online;
 using System.Net.Http;
 using System.Text.Json;
@@ -21,28 +20,27 @@ namespace MusicStrmExtract.Providers;
 public sealed class MusicStrmLocalProvider : ILocalMetadataProvider<Audio>
 {
     private readonly ILogger _logger;
-    private readonly AlbumTrackMapLocator _albumLocator;
+    private readonly IAlbumResolutionService _albumResolutionService;
     private readonly IMusicStrmConfigurationSource _configurationSource;
 
-    /// <summary>专辑定位结果缓存(键=专辑文件夹|艺人文件夹|碟布局|服务地址;TTL 30 分钟,容量 500)。
-    /// 过期项按插入序惰性清理,超容量只淘汰最旧条目。</summary>
-    private static readonly TtlCache<AlbumSearchResult> s_albumCache =
-        new(TimeSpan.FromMinutes(30), CacheMaxEntries);
-
-    private const int CacheMaxEntries = 500;
-
     public MusicStrmLocalProvider(ILogManager logManager)
-        : this(logManager, MusicStrmConfigurationSource.Default)
+        : this(
+            (logManager ?? throw new ArgumentNullException(nameof(logManager)))
+                .GetLogger("MusicStrmExtract"),
+            MusicStrmConfigurationSource.Default,
+            albumResolutionService: null)
     {
     }
 
     internal MusicStrmLocalProvider(
-        ILogManager logManager,
-        IMusicStrmConfigurationSource configurationSource)
+        ILogger logger,
+        IMusicStrmConfigurationSource configurationSource,
+        IAlbumResolutionService? albumResolutionService = null)
     {
-        _logger = logManager.GetLogger("MusicStrmExtract");
-        _configurationSource = configurationSource;
-        _albumLocator = new AlbumTrackMapLocator(_logger, s_albumCache);
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _configurationSource = configurationSource ?? throw new ArgumentNullException(nameof(configurationSource));
+        _albumResolutionService = albumResolutionService
+            ?? MusicStrmRuntime.CreateAlbumResolutionService(_logger);
     }
 
     public string Name => "Music Strm Extract";
@@ -95,12 +93,12 @@ public sealed class MusicStrmLocalProvider : ILocalMetadataProvider<Audio>
         AlbumSearchResult album;
         try
         {
-            album = await _albumLocator.GetOrSearchAsync(
-                AlbumTrackMapLocator.BuildCacheKey(albumFolder, artistFolder, scan.Discs, config),
-                albumFolder,
-                artistFolder,
-                scan.Discs,
-                config,
+            album = await _albumResolutionService.ResolveAsync(
+                new AlbumResolutionRequest(
+                    albumFolder,
+                    artistFolder,
+                    scan.Discs,
+                    config.MusicBrainzBaseUrl),
                 ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is OperationCanceledException && ct.IsCancellationRequested)

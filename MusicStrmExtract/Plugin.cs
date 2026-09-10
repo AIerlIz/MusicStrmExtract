@@ -22,7 +22,7 @@ public class Plugin : BasePluginSimpleUI<PluginConfiguration>, IHasThumbImage, I
     private readonly MusicStrmPageController _uiPageController;
 
     public Plugin(IApplicationHost applicationHost)
-        : base(applicationHost)
+        : base(applicationHost ?? throw new ArgumentNullException(nameof(applicationHost)))
     {
         Instance = this;
         _applicationPaths = applicationHost.Resolve<IApplicationPaths>();

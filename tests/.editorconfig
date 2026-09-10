@@ -1,0 +1,24 @@
+root = false
+
+[*.cs]
+# Test names intentionally use underscores to describe behavior and arrange/act/assert boundaries.
+dotnet_diagnostic.CA1707.severity = none
+
+# Test fixtures commonly share array fixtures and fake disposable objects.
+dotnet_diagnostic.CA1861.severity = none
+dotnet_diagnostic.CA2000.severity = none
+
+# Tests are not production library code and do not need ConfigureAwait.
+dotnet_diagnostic.CA2007.severity = none
+
+# DispatchProxy fakes and test-only helper types are instantiated by the runtime.
+dotnet_diagnostic.CA1812.severity = none
+dotnet_diagnostic.CA1852.severity = none
+
+# Assertion overload guidance is not useful for xUnit test expressions.
+dotnet_diagnostic.CA1305.severity = none
+dotnet_diagnostic.CA1307.severity = none
+dotnet_diagnostic.CA1849.severity = none
+
+# Builder helpers intentionally return interfaces in tests.
+dotnet_diagnostic.CA1859.severity = none

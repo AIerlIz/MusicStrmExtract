@@ -1,3 +1,5 @@
 <Solution>
   <Project Path="MusicStrmExtract.csproj" />
+  <Project Path="../tests/MusicStrmExtract.IntegrationTests/MusicStrmExtract.IntegrationTests.csproj" />
+  <Project Path="../tests/MusicStrmExtract.Tests/MusicStrmExtract.Tests.csproj" />
 </Solution>

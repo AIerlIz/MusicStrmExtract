@@ -9,10 +9,13 @@ public class MusicBrainzApiIntegrationTests
 {
     private const string AlternativeBaseUrl = "https://musicbrainz.emby.tv";
 
-    [Fact]
-    public async Task SearchReleases_Against_Official_Server_Returns_Results()
+    private static string? IntegrationBaseUrl =>
+        Environment.GetEnvironmentVariable("MUSICBRAINZ_INTEGRATION_BASE_URL");
+
+    [LiveMusicBrainzFact]
+    public async Task SearchReleases_Against_Configured_Server_Returns_Results()
     {
-        var api = new MusicBrainzApi(null);
+        var api = new MusicBrainzApi(IntegrationBaseUrl);
         try
         {
             var results = await api.SearchReleasesAsync("1989", "Taylor Swift", 5, CancellationToken.None);
@@ -27,10 +30,10 @@ public class MusicBrainzApiIntegrationTests
         }
     }
 
-    [Fact]
+    [LiveMusicBrainzFact]
     public async Task GetReleaseAsync_Parses_Tracklist_Correctly()
     {
-        var api = new MusicBrainzApi(null);
+        var api = new MusicBrainzApi(IntegrationBaseUrl);
         try
         {
             var release = await api.GetReleaseAsync("62b45cf8-1e4f-4f62-b221-b0c391823e52", CancellationToken.None);
@@ -47,10 +50,10 @@ public class MusicBrainzApiIntegrationTests
         }
     }
 
-    [Fact]
+    [LiveMusicBrainzFact]
     public async Task GetReleaseGroupAsync_Parses_Group_With_Releases()
     {
-        var api = new MusicBrainzApi(null);
+        var api = new MusicBrainzApi(IntegrationBaseUrl);
         try
         {
             var group = await api.GetReleaseGroupAsync("1c4770b3-b7a3-4d44-a7a9-8e2dbb74b85a", CancellationToken.None);
@@ -67,7 +70,7 @@ public class MusicBrainzApiIntegrationTests
         }
     }
 
-    [Fact]
+    [LiveMusicBrainzFact]
     public async Task SearchReleases_With_Alt_BaseUrl_Succeeds()
     {
         var api = new MusicBrainzApi(AlternativeBaseUrl);

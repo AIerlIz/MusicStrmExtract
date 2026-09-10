@@ -27,7 +27,7 @@ public static class ReleaseGroupScorer
     /// <param name="localYear">本地目录名解析出的年份（如 "七里香 (2004)" → 2004）；null 表示无年份，跳过就近排序。</param>
     /// <param name="preferredCountry">自动推断出的偏好国家（ISO 3166-1 alpha-2）；
     /// 只给官方状态且地区匹配的候选加国家层，null 表示不启用国家加权。</param>
-    public static List<RankedRelease> ScoreAll(
+    public static IReadOnlyList<RankedRelease> ScoreAll(
         IReadOnlyList<ReleaseSummary> releases,
         int? localYear = null,
         string? preferredCountry = null)

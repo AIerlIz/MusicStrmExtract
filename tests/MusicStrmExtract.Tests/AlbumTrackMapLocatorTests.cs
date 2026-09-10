@@ -31,12 +31,12 @@ namespace MusicStrmExtract.Tests
             var config = new PluginConfiguration();
 
             var tasks = Enumerable.Range(0, 8)
-                .Select(_ => locator.GetOrSearchAsync(
-                    "Artist|Album|1:1-10|official|official",
-                    "Album",
-                    "Artist",
-                    new[] { local },
-                    config,
+                .Select(_ => locator.ResolveAsync(
+                    new AlbumResolutionRequest(
+                        "Album",
+                        "Artist",
+                        new[] { local },
+                        config.MusicBrainzBaseUrl),
                     CancellationToken.None))
                 .ToArray();
 
