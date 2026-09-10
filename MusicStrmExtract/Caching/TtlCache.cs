@@ -89,16 +89,6 @@ public sealed class TtlCache<TValue>
         }
     }
 
-    public void Clear()
-    {
-        lock (_gate)
-        {
-            _map.Clear();
-            _head = null;
-            _tail = null;
-        }
-    }
-
     private void ExpireOldest(DateTime now)
     {
         while (_head != null && now - _head.CreatedUtc >= _ttl)

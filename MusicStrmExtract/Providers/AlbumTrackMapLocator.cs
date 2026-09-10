@@ -2,8 +2,6 @@ using MediaBrowser.Model.Logging;
 using MusicStrmExtract.Caching;
 using MusicStrmExtract.Online;
 using System.Globalization;
-using System.Net.Http;
-using System.Text.Json;
 
 namespace MusicStrmExtract.Providers;
 
@@ -16,7 +14,6 @@ internal sealed class AlbumTrackMapLocator : IAlbumResolutionService
     private readonly ILogger _logger;
     private readonly TtlCache<AlbumSearchResult> _cache;
     private readonly Func<string?, IMusicBrainzApi> _apiFactory;
-    private readonly ResolutionDiagnosticsStore _diagnostics;
     private readonly object _inflightGate = new();
     private readonly Dictionary<string, SharedSearch> _inflight =
         new(StringComparer.Ordinal);
@@ -25,8 +22,7 @@ internal sealed class AlbumTrackMapLocator : IAlbumResolutionService
         : this(
             logger,
             cache,
-            baseUrl => new MusicBrainzApi(baseUrl),
-            new ResolutionDiagnosticsStore())
+            baseUrl => new MusicBrainzApi(baseUrl))
     {
     }
 
@@ -34,20 +30,10 @@ internal sealed class AlbumTrackMapLocator : IAlbumResolutionService
         ILogger logger,
         TtlCache<AlbumSearchResult> cache,
         Func<string?, IMusicBrainzApi> apiFactory)
-        : this(logger, cache, apiFactory, new ResolutionDiagnosticsStore())
-    {
-    }
-
-    internal AlbumTrackMapLocator(
-        ILogger logger,
-        TtlCache<AlbumSearchResult> cache,
-        Func<string?, IMusicBrainzApi> apiFactory,
-        ResolutionDiagnosticsStore diagnostics)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
         _apiFactory = apiFactory ?? throw new ArgumentNullException(nameof(apiFactory));
-        _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
     }
 
     public Task<AlbumSearchResult> ResolveAsync(
@@ -147,41 +133,26 @@ internal sealed class AlbumTrackMapLocator : IAlbumResolutionService
     {
         using var api = _apiFactory(
             string.IsNullOrWhiteSpace(request.MusicBrainzBaseUrl) ? null : request.MusicBrainzBaseUrl);
-        try
-        {
-            var search = new AlbumSearch(api);
-            var result = await search
-                .SearchForTrackMapAsync(
-                    request.AlbumFolder,
-                    request.ArtistFolder,
-                    request.LocalDiscs,
-                    ct)
-                .ConfigureAwait(false);
-            ct.ThrowIfCancellationRequested();
+        var search = new AlbumSearch(api);
+        var result = await search
+            .SearchForTrackMapAsync(
+                request.AlbumFolder,
+                request.ArtistFolder,
+                request.LocalDiscs,
+                ct)
+            .ConfigureAwait(false);
+        ct.ThrowIfCancellationRequested();
 
-            _cache.Set(cacheKey, result);
-            _diagnostics.Record(
-                request,
-                result.Found ? AlbumResolutionOutcome.Found : AlbumResolutionOutcome.NotFound,
-                result);
-            _logger.Info($"[MusicStrmExtract] [LocalProvider] 专辑定位: '{request.AlbumFolder}' -> " +
-                (result.Found
-                    ? $"'{result.Title}' releaseMBID={result.ReleaseMbid} 碟数={result.Medias.Count} 轨数={result.Medias.Sum(m => m.Tracks.Count)}"
-                    : "无命中/碟轨覆盖未通过"));
-            return result;
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
-        {
-            _diagnostics.Record(
-                request,
-                AlbumResolutionOutcome.Unavailable,
-                reason: ex.Message);
-            throw;
-        }
+        _cache.Set(cacheKey, result);
+        _logger.Info(
+            $"[Resolve] album=\"{request.AlbumFolder}\" artist=\"{request.ArtistFolder ?? string.Empty}\" " +
+            $"result={(result.Found ? "found" : "not_found")}" +
+            (result.Found
+                ? $" title=\"{result.Title}\" releaseId={result.ReleaseMbid} " +
+                  $"releaseGroupId={result.ReleaseGroupMbid} discs={result.Medias.Count} " +
+                  $"tracks={result.Medias.Sum(m => m.Tracks.Count)}"
+                : string.Empty));
+        return result;
     }
 
     internal static string BuildCacheKey(

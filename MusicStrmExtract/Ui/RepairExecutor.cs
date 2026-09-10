@@ -86,7 +86,8 @@ internal sealed class RepairExecutor
         }
 
         _logger.Info(
-            $"[MusicStrmExtract] [LegacyRepair] 删除陈旧 MusicAlbum={plan.AlbumsToDelete.Count}, 排队刷新 .strm={plan.StrmToRefresh.Count}");
+            $"[LegacyRepair] result=completed deletedAlbums={plan.AlbumsToDelete.Count} " +
+            $"queuedStrm={plan.StrmToRefresh.Count}");
         progress?.Report("修复完成。");
         return $"已删除 {plan.AlbumsToDelete.Count} 个陈旧 MusicAlbum，已排队刷新 {plan.StrmToRefresh.Count} 个 .strm。";
     }
@@ -97,7 +98,8 @@ internal sealed class RepairExecutor
             return null;
 
         _logger.Info(
-            $"[MusicStrmExtract] [LegacyRepair] 媒体库扫描已开始，{phase}：{summary}");
+            $"[LegacyRepair] result=aborted phase=\"{phase}\" summary=\"{summary}\" " +
+            "reason=\"library_scan_started\"");
         return $"媒体库扫描已开始，修复已中止（{summary}）。";
     }
 }

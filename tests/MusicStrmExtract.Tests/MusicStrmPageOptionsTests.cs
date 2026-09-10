@@ -14,10 +14,9 @@ namespace MusicStrmExtract.Tests
             Assert.Equal("RepairLegacyAlbumRelations", MusicStrmPageOptions.RepairCommand);
             Assert.Equal("修复旧库专辑关系", options.RepairButton.Caption);
             Assert.Equal(MusicStrmPageOptions.RepairCommand, options.RepairButton.CommandId);
-            Assert.Contains("无路径", options.RepairButton.ConfirmationPrompt, System.StringComparison.Ordinal);
-            Assert.Equal(MusicStrmPageOptions.ClearCacheCommand, options.ClearCacheButton.CommandId);
-            Assert.Equal(MusicStrmPageOptions.CheckSourceCommand, options.CheckSourceButton.CommandId);
-            Assert.Equal(MusicStrmPageOptions.RefreshDiagnosticsCommand, options.RefreshDiagnosticsButton.CommandId);
+            Assert.Equal("MusicBrainz", options.MusicBrainzCaption.Caption);
+            Assert.Equal("维护", options.MaintenanceCaption.Caption);
+            Assert.Contains("刷新相关", options.RepairButton.ConfirmationPrompt, System.StringComparison.Ordinal);
         }
     }
 }

@@ -32,7 +32,6 @@
 ### 配置页运行按钮
 - `Plugin` 仍继承 `BasePluginSimpleUI<PluginConfiguration>` 负责 JSON 配置存储，并在类声明中显式列出 `IHasUIPages`，通过公开的 `UIPageControllers` 属性重实现接口，覆盖基类的 Simple UI 页面；只写属性而不重新声明接口不会生效。
 - 配置页按钮命令由 `MusicStrmPageView.RunCommand` 转发到 `LegacyAlbumRepairService`；不要在 Provider 链路里直接调用修复逻辑。
-- 配置页还包含 `ClearPluginCache`、`CheckMusicBrainzSource`、`RefreshResolutionDiagnostics` 命令，分别操作插件自有缓存、MusicBrainz 来源检查和进程内定位诊断；这些功能不得修改 Emby 媒体库数据。
 - 修复只删除无 `MusicBrainzAlbum`、无文件路径、且未被任何 Audio `AlbumId` 引用的 `MusicAlbum`，随后排队刷新相关 `.strm`；不要改成无确认地批量删库。
 - 页面新增按钮时，确认 `ButtonItem.CommandId` 与 `MusicStrmPageView.RunCommand` 的分支一致。
 

@@ -113,7 +113,9 @@ public sealed class MusicStrmLocalProvider : ILocalMetadataProvider<Audio>
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
         {
             // MB 不可达/超时:不写缓存、不产生结果(条目保持现状)
-            _logger.Warn($"[MusicStrmExtract] [LocalProvider] 专辑定位 MB 不可达: '{albumFolder}' -> {ex.Message}");
+            _logger.Warn(
+                $"[Resolve] album=\"{albumFolder}\" artist=\"{artistFolder ?? string.Empty}\" " +
+                $"result=unavailable error=\"{ex.Message}\"");
             return false;
         }
 
@@ -135,9 +137,10 @@ public sealed class MusicStrmLocalProvider : ILocalMetadataProvider<Audio>
         result.HasMetadata = true;
         ct.ThrowIfCancellationRequested();
 
-        _logger.Info($"[MusicStrmExtract] [LocalProvider] 专辑轨道定位: '{albumFolder}' " +
-            $"碟 {resolution.Media.Position} 轨 {resolution.Track.Number} '{resolution.Track.Title}' " +
-            $"recordingMBID={resolution.Track.RecordingMbid}");
+        _logger.Debug(
+            $"[Track] album=\"{albumFolder}\" disc={resolution.Media.Position} " +
+            $"track={resolution.Track.Number} title=\"{resolution.Track.Title}\" " +
+            $"recordingId={resolution.Track.RecordingMbid}");
         return true;
     }
 }

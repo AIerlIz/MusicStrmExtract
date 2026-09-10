@@ -73,7 +73,7 @@ internal static class AlbumDirectoryScanner
         {
             // 目录读取失败时返回已收集到的碟组;部分已收集的数据仍可用于定位
             warning?.Invoke(
-                $"[MusicStrmExtract] [LocalProvider] 扫描专辑目录失败: Path={albumDir} -> {ex.Message}");
+                $"[Scan] albumDir=\"{albumDir}\" result=partial error=\"{ex.Message}\"");
         }
 
         var result = new List<LocalDisc>();

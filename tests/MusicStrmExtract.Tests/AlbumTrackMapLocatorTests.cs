@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net.Http;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -98,40 +97,6 @@ namespace MusicStrmExtract.Tests
 
             Assert.Equal(1, api.SearchCalls);
             Assert.Equal(0, cache.Count);
-        }
-
-        [Fact]
-        public async Task ResolveAsync_RecordsNotFoundDiagnostic()
-        {
-            var cache = new TtlCache<AlbumSearchResult>(TimeSpan.FromMinutes(30), 10);
-            var diagnostics = new ResolutionDiagnosticsStore();
-            var locator = new AlbumTrackMapLocator(
-                CreateLogger(),
-                cache,
-                _ => new CountingMusicBrainzApi(),
-                diagnostics);
-
-            var result = await locator.ResolveAsync(CreateRequest(), CancellationToken.None);
-
-            Assert.False(result.Found);
-            Assert.Contains("未命中 1", diagnostics.GetSummary(), StringComparison.Ordinal);
-        }
-
-        [Fact]
-        public async Task ResolveAsync_RecordsUnavailableDiagnostic()
-        {
-            var cache = new TtlCache<AlbumSearchResult>(TimeSpan.FromMinutes(30), 10);
-            var diagnostics = new ResolutionDiagnosticsStore();
-            var locator = new AlbumTrackMapLocator(
-                CreateLogger(),
-                cache,
-                _ => new ThrowingMusicBrainzApi(),
-                diagnostics);
-
-            await Assert.ThrowsAsync<HttpRequestException>(
-                () => locator.ResolveAsync(CreateRequest(), CancellationToken.None));
-
-            Assert.Contains("来源异常 1", diagnostics.GetSummary(), StringComparison.Ordinal);
         }
 
         private static AlbumTrackMapLocator CreateLocator(
@@ -242,32 +207,6 @@ namespace MusicStrmExtract.Tests
                     CancellationObserved.TrySetResult();
                     throw;
                 }
-            }
-
-            public Task<ParsedRelease> GetReleaseAsync(string releaseMbid, CancellationToken ct)
-            {
-                throw new NotSupportedException();
-            }
-
-            public Task<ParsedReleaseGroup> GetReleaseGroupAsync(string rgMbid, CancellationToken ct)
-            {
-                throw new NotSupportedException();
-            }
-
-            public void Dispose()
-            {
-            }
-        }
-
-        private sealed class ThrowingMusicBrainzApi : IMusicBrainzApi
-        {
-            public Task<IReadOnlyList<ScoredRelease>> SearchReleasesAsync(
-                string album,
-                string? artist,
-                int limit,
-                CancellationToken ct)
-            {
-                throw new HttpRequestException("MusicBrainz unavailable");
             }
 
             public Task<ParsedRelease> GetReleaseAsync(string releaseMbid, CancellationToken ct)
