@@ -1,3 +1,4 @@
+using System.Globalization;
 using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.IO;
@@ -35,8 +36,9 @@ internal sealed class RepairExecutor
     {
         ArgumentNullException.ThrowIfNull(plan);
 
+        // 删除阶段:逐条删除并在每一步前后检查取消与扫描竞态,扫描一开始立即中止。
         ct.ThrowIfCancellationRequested();
-        var aborted = AbortIfScanRunning("中止删除", "已删除 0 个陈旧 MusicAlbum");
+        var aborted = AbortIfScanRunning("中止删除", FormatDeleteSummary(0));
         if (aborted is not null)
             return aborted;
 
@@ -45,9 +47,7 @@ internal sealed class RepairExecutor
         foreach (var album in plan.AlbumsToDelete)
         {
             ct.ThrowIfCancellationRequested();
-            aborted = AbortIfScanRunning(
-                "中止删除",
-                $"已删除 {deleted}/{plan.AlbumsToDelete.Count} 个陈旧 MusicAlbum");
+            aborted = AbortIfScanRunning("中止删除", FormatDeleteSummary(deleted));
             if (aborted is not null)
                 return aborted;
 
@@ -55,8 +55,9 @@ internal sealed class RepairExecutor
             deleted++;
         }
 
+        // 删除完成后进入刷新阶段;此时的中止摘要需带上已删除数量。
         ct.ThrowIfCancellationRequested();
-        aborted = AbortIfScanRunning("跳过刷新", $"已删除 {deleted} 个陈旧 MusicAlbum");
+        aborted = AbortIfScanRunning("跳过刷新", FormatDeleteSummary(deleted));
         if (aborted is not null)
             return aborted;
 
@@ -64,18 +65,11 @@ internal sealed class RepairExecutor
         if (plan.StrmToRefresh.Count > 0)
         {
             progress?.Report($"正在排队刷新 {plan.StrmToRefresh.Count} 个 .strm...");
-            var refreshOptions = new MetadataRefreshOptions(_fileSystem)
-            {
-                MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
-                ImageRefreshMode = MetadataRefreshMode.FullRefresh,
-                ReplaceAllMetadata = false
-            };
+            var refreshOptions = CreateRefreshOptions();
 
             foreach (var audio in plan.StrmToRefresh)
             {
-                aborted = AbortIfScanRunning(
-                    "中止刷新",
-                    $"已删除 {deleted} 个陈旧 MusicAlbum，已排队 {queued} 个 .strm");
+                aborted = AbortIfScanRunning("中止刷新", FormatRefreshSummary(deleted, queued));
                 if (aborted is not null)
                     return aborted;
 
@@ -90,6 +84,33 @@ internal sealed class RepairExecutor
             $"queuedStrm={plan.StrmToRefresh.Count}");
         progress?.Report("修复完成。");
         return $"已删除 {plan.AlbumsToDelete.Count} 个陈旧 MusicAlbum，已排队刷新 {plan.StrmToRefresh.Count} 个 .strm。";
+    }
+
+    /// <summary>删除阶段的中止摘要:仅汇报已删除数量。</summary>
+    private static string FormatDeleteSummary(int deletedAlbums)
+    {
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"已删除 {deletedAlbums} 个陈旧 MusicAlbum");
+    }
+
+    /// <summary>刷新阶段的中止摘要:同时汇报已删除与已排队数量。</summary>
+    private static string FormatRefreshSummary(int deletedAlbums, int queuedStrm)
+    {
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"已删除 {deletedAlbums} 个陈旧 MusicAlbum，已排队 {queuedStrm} 个 .strm");
+    }
+
+    /// <summary>本次修复的刷新选项:强制全量元数据/图片刷新,但保留已有字段。</summary>
+    private MetadataRefreshOptions CreateRefreshOptions()
+    {
+        return new MetadataRefreshOptions(_fileSystem)
+        {
+            MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
+            ImageRefreshMode = MetadataRefreshMode.FullRefresh,
+            ReplaceAllMetadata = false
+        };
     }
 
     private string? AbortIfScanRunning(string phase, string summary)

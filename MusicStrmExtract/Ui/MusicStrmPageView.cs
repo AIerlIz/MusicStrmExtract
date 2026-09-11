@@ -65,22 +65,14 @@ internal sealed class MusicStrmPageView : IPluginPageView, IDisposable
     public Task<IPluginUIView> RunCommand(string itemId, string commandId, string data)
     {
         if (string.Equals(commandId, "PageSave", StringComparison.Ordinal))
-        {
             return OnSaveCommand(itemId, commandId, data);
-        }
 
-        if (string.Equals(commandId, MusicStrmPageOptions.RepairCommand, StringComparison.Ordinal))
+        if (!string.Equals(commandId, MusicStrmPageOptions.RepairCommand, StringComparison.Ordinal))
+            return Task.FromResult<IPluginUIView>(null!); // 未知命令交由 Emby 回退处理
+
+        if (!_repairRunner.TryStart("旧库专辑关系修复已开始，正在读取媒体库..."))
         {
-            if (!_repairRunner.TryStart("旧库专辑关系修复已开始，正在读取媒体库..."))
-            {
-                ContentData.ResultLabel.Text = "修复正在运行，请等待当前任务结束后再执行。";
-                RaiseInfoChanged();
-                return Task.FromResult((IPluginUIView)this);
-            }
-        }
-        else
-        {
-            return Task.FromResult<IPluginUIView>(null!);
+            ContentData.ResultLabel.Text = "修复正在运行，请等待当前任务结束后再执行。";
         }
 
         RaiseInfoChanged();

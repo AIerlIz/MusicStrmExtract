@@ -23,41 +23,70 @@ internal static class ReleaseLayoutMatcher
         if (audioMedias.Count == 0)
             return null;
 
+        var map = new Dictionary<LocalDisc, ReleaseMedia>();
+        var usedPositions = new HashSet<int>();
+
+        // 有碟号的组必须与同名 media.Position 一一对应
+        if (!MapExplicitGroups(localDiscs, audioMedias, usedPositions, map))
+            return null;
+
+        // 无碟号的组在剩余 media 中最先取能覆盖轨号者
+        if (!MapImplicitGroups(localDiscs, audioMedias, usedPositions, map))
+            return null;
+
+        return map;
+    }
+
+    /// <summary>按碟号顺序把显式碟组映射到同 Position 的音频 media;任一失败即返回 false。</summary>
+    private static bool MapExplicitGroups(
+        IReadOnlyList<LocalDisc> localDiscs,
+        List<ReleaseMedia> audioMedias,
+        HashSet<int> usedPositions,
+        Dictionary<LocalDisc, ReleaseMedia> map)
+    {
         var explicitGroups = localDiscs
             .Where(d => d.DiscNumber is > 0)
-            .OrderBy(d => d.DiscNumber!.Value)
-            .ToList();
-        var implicitGroups = localDiscs
-            .Where(d => d.DiscNumber is not > 0)
-            .ToList();
-
-        var usedPositions = new HashSet<int>();
-        var map = new Dictionary<LocalDisc, ReleaseMedia>();
+            .OrderBy(d => d.DiscNumber!.Value);
 
         foreach (var group in explicitGroups)
         {
             var media = audioMedias.FirstOrDefault(m => m.Position == group.DiscNumber!.Value);
             if (media is null || !usedPositions.Add(media.Position) || !Covers(media, group.TrackNumbers))
-                return null;
+                return false;
 
             map.Add(group, media);
         }
 
+        return true;
+    }
+
+    /// <summary>把无碟号的组映射到剩余 media 中场序最小且能覆盖轨号者;任一失败即返回 false。</summary>
+    private static bool MapImplicitGroups(
+        IReadOnlyList<LocalDisc> localDiscs,
+        List<ReleaseMedia> audioMedias,
+        HashSet<int> usedPositions,
+        Dictionary<LocalDisc, ReleaseMedia> map)
+    {
         var remaining = audioMedias
             .Where(m => !usedPositions.Contains(m.Position))
             .OrderBy(m => m.Position)
             .ToList();
-        foreach (var group in implicitGroups.OrderByDescending(g => g.TrackNumbers.Count))
+
+        var implicitGroups = localDiscs
+            .Where(d => d.DiscNumber is not > 0)
+            .OrderByDescending(g => g.TrackNumbers.Count);
+
+        foreach (var group in implicitGroups)
         {
             var media = remaining.FirstOrDefault(m => Covers(m, group.TrackNumbers));
             if (media is null)
-                return null;
+                return false;
 
             remaining.Remove(media);
             map.Add(group, media);
         }
 
-        return map;
+        return true;
     }
 
     private static readonly string[] s_videoMediaFormats =

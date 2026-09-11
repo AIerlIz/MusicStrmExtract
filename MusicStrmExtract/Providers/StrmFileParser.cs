@@ -77,19 +77,28 @@ public static class StrmFileParser
             name = name[..^".strm".Length];
 
         var isCommentary = s_commentaryRegex.IsMatch(name);
-        var discTrack = s_keywordDiscTrackRegex.Match(name);
-        if (discTrack.Success && TryNumber(discTrack.Groups[2], out var track) && track > 0)
-            return (GetDisc(discTrack.Groups[1]), track, isCommentary);
 
-        discTrack = s_plainDiscTrackRegex.Match(name);
-        if (discTrack.Success && TryNumber(discTrack.Groups[2], out track) && track > 0)
-            return (GetDisc(discTrack.Groups[1]), track, isCommentary);
+        // 碟+轨形态优先:关键字形态 "CD1-01"/"Disc 1 - 01" 与紧凑形态 "1-01"/"01.01"
+        var discTrack = TryParseDiscTrack(s_keywordDiscTrackRegex, name)
+            ?? TryParseDiscTrack(s_plainDiscTrackRegex, name);
+        if (discTrack is not null)
+            return (discTrack.Value.DiscNumber, discTrack.Value.TrackNumber, isCommentary);
 
         var trackOnly = s_trackNumberRegex.Match(name);
-        if (trackOnly.Success && TryNumber(trackOnly.Groups[1], out track) && track > 0)
+        if (trackOnly.Success && TryNumber(trackOnly.Groups[1], out var track) && track > 0)
             return (null, track, isCommentary);
 
         return (null, 0, isCommentary);
+    }
+
+    /// <summary>按给定正则匹配"碟号 + 轨号"前缀;未匹配或轨号非正时返回 null。</summary>
+    private static (int? DiscNumber, int TrackNumber)? TryParseDiscTrack(Regex pattern, string name)
+    {
+        var match = pattern.Match(name);
+        if (!match.Success || !TryNumber(match.Groups[2], out var track) || track <= 0)
+            return null;
+
+        return (GetDisc(match.Groups[1]), track);
     }
 
     /// <summary>

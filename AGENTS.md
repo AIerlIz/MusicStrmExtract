@@ -39,9 +39,14 @@
 - `AlbumSearch.SearchForTrackMapAsync` 把专辑文件夹先定位为 release-group（专辑概念），再从该组 release（可购买发行版本）中选实体版本；`MusicBrainzApi.GetReleaseGroupAsync` 返回 `ParsedReleaseGroup`，组级 ID/艺人信息要传给最终结果，不能只依赖 release 详情里碰巧带出的嵌套字段。
 - `AlbumSearch.SearchForTrackMapAsync` 会先检查 top-1 候选所在的 release-group；若当前 RG 没有轨数完全一致的 exact 命中，会继续检查搜索候选里其它 RG 的精确命中。
 - 找到首个 exact 后直接返回，不继续拉取同档候选做外网决胜。
+- 搜索阶段与选版阶段的排序是两套独立逻辑，不要合并：`SearchCandidateOrderingPolicy.Order` 只回答"哪张专辑是你要的"（状态 → Album 主类型 → 完整日期 → 日期 → score → 标题 → id），`ReleaseGroupScorer` 只回答"这张专辑里哪个版本对得上"（状态 → 年份贴近 → 国家偏好 → 日期/质量分）。两阶段数据形态不同：搜索响应拿不到 media/packaging，无法算组内质量分。
+- **国家偏好只属于选版阶段**。`SearchCandidateOrderingPolicy.Order` 刻意不接受国家参数，不要在搜索阶段重新引入（候选可能分属不同专辑，国家偏好在"选专辑"层面没有语义）。`InferPreferredCountry` 只在 `TryResolveFromReleaseGroupAsync` 的组内评分里调用一次。
 - RG 分层顺序为状态 → 年份贴近 → 国家偏好 → 日期；残余同分在 `ReleaseGroupScorer.ScoreAll` 内按日期 → 质量分 → release id 稳定排序，不再依赖封面图。
-- 国家偏好只加给“官方状态且与偏好国家一致”的候选，不能把 Bootleg/Pseudo/Withdrawn 的低状态版本抬到官方版本之上。
-- 搜索候选状态排序与 RG 评分统一在 `ReleaseStatusPolicy.SearchPriority` / `ScoreWeight` 维护，不要另写一套字符串分类；修改优先级时同步 `ReleaseStatusPolicyTests`、`AlbumSearchSelectionTests` 和 `ReleaseGroupScorerTests`。
+- 国家层是「惩罚式硬优先级」，不是「奖励式软倾斜」：`IsForeignOfficial` 只给「官方状态且国家不等于偏好国」的候选 `+CountryRankBase`，偏好国本身不加分。这样候选里没有偏好国时，所有官方版被同等推后，相对顺序与不启用国家层完全一致。不要改成给偏好国加分（无匹配国家时会与不启用路径分叉）。
+- 国家层权重存在量级契约：`CountryRankBase < YearGapRankBase`，由 `ReleaseGroupScorer.RankLayersAreIsolated` 记录并由 `ReleaseGroupScorerTests` 的行为测试锁定。`CountryRankBase` 一旦调到 ≥ `YearGapRankBase`，国家偏好就会翻越年份贴近层；想做成「轻微倾斜」必须新增独立比较维度，而不是改这个数值。
+- 缺失日期语义只在 `JsonUtil.NormalizeDate` / `JsonUtil.MissingDateSentinel` 一处定义，搜索排序与组内评分共用。不要在调用点硬编码 `"9999"`。年份距离的 `MissingYearDistance` 与它同义但服务于数值型比较，改动时两者一起看。
+- 国家偏好只影响官方版本，不能把 Bootleg/Pseudo/Withdrawn 的低状态版本抬到官方版本之上。
+- 搜索候选状态排序与 RG 评分统一在 `ReleaseStatusPolicy.SearchPriority` / `ScoreWeight` 维护，不要另写一套字符串分类；修改优先级时同步 `ReleaseStatusPolicyTests`、`AlbumSearchSelectionTests`、`SearchCandidateOrderingPolicyTests` 和 `ReleaseGroupScorerTests`。
 - 修改这些排序、提前返回或断点逻辑时，同步维护 `AlbumSearchSelectionTests` 和 `ReleaseGroupScorerTests`。
 
 ### MusicBrainz 限流

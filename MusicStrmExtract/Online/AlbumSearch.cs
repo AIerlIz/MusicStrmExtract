@@ -9,7 +9,8 @@ namespace MusicStrmExtract.Online;
 /// 用 release:"专辑" AND artist:"艺人" 查询候选 release 以反查 release-group(每个 release 只属于一个 RG),
 /// 再按本地碟组(碟号+轨号)校验组内各 release 的 media 布局,
 /// 返回命中 release 的完整轨道映射(每轨 recording MBID/标题)——单曲按碟号+轨号取数。
-/// 目录名原样透传给 MusicBrainz,不参与本地文本比较;候选顺序稳定(Official 优先 → Album 主类型 → 完整日期优先 → 偏好国家 → score)。
+/// 目录名原样透传给 MusicBrainz,不参与本地文本比较;候选顺序稳定(Official 优先 → Album 主类型 → 完整日期优先 → score)。
+/// 国家偏好只在组内选版阶段(ReleaseGroupScorer)推断与生效,搜索阶段不参与。
 /// </summary>
 public sealed class AlbumSearch
 {
@@ -49,40 +50,35 @@ public sealed class AlbumSearch
         IReadOnlyList<LocalDisc> localDiscs,
         CancellationToken ct)
     {
-        var result = AlbumSearchResult.Empty;
         var clean = CleanAlbumName(albumFolderName, artistName);
         if (string.IsNullOrWhiteSpace(clean)
             || localDiscs is null
             || localDiscs.Count == 0
             || !localDiscs.Any(d => d.TrackNumbers.Count > 0))
-            return result;
+            return AlbumSearchResult.Empty;
 
         var scored = (await _api.SearchReleasesAsync(clean, artistName, SearchCandidateLimit, ct).ConfigureAwait(false))
             .Where(s => s.Score > 0 && !string.IsNullOrWhiteSpace(s.Release.Title))
             .ToList();
         if (scored.Count == 0)
-            return result;
+            return AlbumSearchResult.Empty;
 
-        // 无感国家偏好:从搜索候选推断多数国家,用于 top-10 排序时的 tie-break
-        var preferredCountry = ReleaseGroupScorer.InferPreferredCountry(
-            scored.Select(s => s.Release).ToList(),
-            localDiscs);
-
-        var ordered = SearchCandidateOrderingPolicy.Order(scored, preferredCountry);
+        // 搜索阶段只按"候选是否像目标专辑"排序选出 RG 锚点;
+        // 国家偏好从属于组内选版,统一在 TryResolveFromReleaseGroupAsync 里推断并使用。
+        var ordered = SearchCandidateOrderingPolicy.Order(scored);
         var state = new SearchState();
 
-        // 尝试用 release-group 下 browse 补齐后的 release 候选分层评分选出最优实体版本;没有 exact 时保留已看到的布局候选,
-        // 继续走搜索回退路径,避免当前 RG 无精确版本时错过其它 RG 的精确命中。
+        // 优先用 release-group 下 browse 补齐后的 release 候选分层评分选出最优实体版本;
+        // 没有 exact 时保留已看到的布局候选,继续走搜索回退路径,避免当前 RG 无精确版本时错过其它 RG 的精确命中。
         var rgResult = await TryResolveFromReleaseGroupAsync(
             ordered[0],
             localDiscs,
             ParseFolderYear(albumFolderName, artistName),
             state,
             ct).ConfigureAwait(false);
-        if (rgResult is not null)
-            return rgResult;
 
-        return await TryResolveFromOrderedCandidatesAsync(ordered, localDiscs, state, ct).ConfigureAwait(false);
+        return rgResult
+            ?? await TryResolveFromOrderedCandidatesAsync(ordered, localDiscs, state, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -110,21 +106,12 @@ public sealed class AlbumSearch
             var rgPreferredCountry = ReleaseGroupScorer.InferPreferredCountry(rg.Releases, localDiscs);
             var ranked = ReleaseGroupScorer.ScoreAll(rg.Releases, localYear, rgPreferredCountry);
 
-            foreach (var rankedRelease in ranked)
-            {
-                var match = await _candidateEvaluator.TryMatchAsync(
-                    rankedRelease.Release,
-                    localDiscs,
-                    state.EvaluatedReleaseIds,
-                    ct).ConfigureAwait(false);
-                if (match is null)
-                    continue;
-
-                if (match.IsExact)
-                    return AlbumSearchResultFactory.Create(match.Release, match.Medias, rg);
-
-                SetFallback(state, rg, match.Release, match.Medias);
-            }
+            return await EvaluateCandidatesAsync(
+                ranked.Select(r => r.Release).ToList(),
+                localDiscs,
+                rg,
+                state,
+                ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -133,9 +120,8 @@ public sealed class AlbumSearch
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
         {
             // RG 查询/评分失败,降级到搜索候选回退
+            return null;
         }
-
-        return null;
     }
 
     /// <summary>
@@ -150,10 +136,31 @@ public sealed class AlbumSearch
         SearchState state,
         CancellationToken ct)
     {
-        foreach (var scoredRelease in ordered)
+        var result = await EvaluateCandidatesAsync(
+            ordered.Select(s => s.Release).ToList(),
+            localDiscs,
+            releaseGroup: null,
+            state,
+            ct).ConfigureAwait(false);
+
+        return result ?? state.FirstFallback ?? AlbumSearchResult.Empty;
+    }
+
+    /// <summary>
+    /// 按顺序评估候选 release:命中 exact 立即返回(无论是否来自 RG 评分路径);
+    /// 非 exact 只记录首个布局候选作回退。全部未命中时返回 null,由调用方决定后续路径。
+    /// </summary>
+    private async Task<AlbumSearchResult?> EvaluateCandidatesAsync(
+        IReadOnlyList<ReleaseSummary> candidates,
+        IReadOnlyList<LocalDisc> localDiscs,
+        ParsedReleaseGroup? releaseGroup,
+        SearchState state,
+        CancellationToken ct)
+    {
+        foreach (var candidate in candidates)
         {
             var match = await _candidateEvaluator.TryMatchAsync(
-                scoredRelease.Release,
+                candidate,
                 localDiscs,
                 state.EvaluatedReleaseIds,
                 ct).ConfigureAwait(false);
@@ -161,31 +168,31 @@ public sealed class AlbumSearch
                 continue;
 
             if (match.IsExact)
-                return AlbumSearchResultFactory.Create(match.Release, match.Medias, null);
+                return AlbumSearchResultFactory.Create(match.Release, match.Medias, releaseGroup);
 
-            SetFallback(state, null, match.Release, match.Medias);
+            state.RecordFallback(match, releaseGroup);
         }
 
-        return state.FirstFallback ?? AlbumSearchResult.Empty;
+        return null;
     }
 
-    private static void SetFallback(
-        SearchState state,
-        ParsedReleaseGroup? releaseGroup,
-        ReleaseSummary release,
-        IReadOnlyList<ReleaseMedia> medias)
-    {
-        if (state.FirstFallback is not null || string.IsNullOrWhiteSpace(release.Id))
-            return;
-
-        state.FirstFallback = AlbumSearchResultFactory.Create(release, medias, releaseGroup);
-    }
-
+    /// <summary>一次搜索的中间状态:首个布局候选回退 + 已取过详情的 release(避免重复请求)。</summary>
     private sealed class SearchState
     {
-        public AlbumSearchResult? FirstFallback { get; set; }
+        private AlbumSearchResult? _firstFallback;
+
+        public AlbumSearchResult? FirstFallback => _firstFallback;
 
         public HashSet<string> EvaluatedReleaseIds { get; } =
             new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>记录首个非 exact 的布局候选;已记录过或 release 无 id 时忽略。</summary>
+        public void RecordFallback(ReleaseMatch match, ParsedReleaseGroup? releaseGroup)
+        {
+            if (_firstFallback is not null || string.IsNullOrWhiteSpace(match.Release.Id))
+                return;
+
+            _firstFallback = AlbumSearchResultFactory.Create(match.Release, match.Medias, releaseGroup);
+        }
     }
 }

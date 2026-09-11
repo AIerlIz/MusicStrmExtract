@@ -16,8 +16,7 @@ namespace MusicStrmExtract.Tests
             var bootlegAlbum = CreateScored("bootleg", "Bootleg", "Album", "2020-01-01", "US", 100);
 
             var ordered = SearchCandidateOrderingPolicy.Order(
-                [officialSingle, bootlegAlbum, officialAlbum],
-                preferredCountry: null);
+                [officialSingle, bootlegAlbum, officialAlbum]);
 
             Assert.Equal("official", ordered[0].Release.Id);
         }
@@ -30,25 +29,37 @@ namespace MusicStrmExtract.Tests
             var earlier = CreateScored("earlier", "Official", "Album", "2020-01-01", "US", 100);
 
             var ordered = SearchCandidateOrderingPolicy.Order(
-                [incomplete, later, earlier],
-                preferredCountry: null);
+                [incomplete, later, earlier]);
 
             Assert.Equal(new[] { "earlier", "later", "incomplete" }, ordered.ConvertAll(r => r.Release.Id));
         }
 
         [Fact]
-        public void Order_UsesCountryScoreTitleAndIdAsStableTieBreakers()
+        public void Order_UsesScoreTitleAndIdAsStableTieBreakers()
         {
-            var otherCountry = CreateScored("a", "Official", "Album", "2020-01-01", "GB", 100, "Alpha");
             var lowerScore = CreateScored("b", "Official", "Album", "2020-01-01", "US", 90, "Alpha");
             var titleLater = CreateScored("c", "Official", "Album", "2020-01-01", "US", 100, "Beta");
             var titleEarlier = CreateScored("d", "Official", "Album", "2020-01-01", "US", 100, "Alpha");
+            var sameTitleLowerId = CreateScored("a", "Official", "Album", "2020-01-01", "US", 100, "Alpha");
 
             var ordered = SearchCandidateOrderingPolicy.Order(
-                [otherCountry, lowerScore, titleLater, titleEarlier],
-                preferredCountry: "US");
+                [lowerScore, titleLater, titleEarlier, sameTitleLowerId]);
 
-            Assert.Equal(new[] { "d", "c", "b", "a" }, ordered.ConvertAll(r => r.Release.Id));
+            // score 降序 → title 升序 → id 升序
+            Assert.Equal(new[] { "a", "d", "c", "b" }, ordered.ConvertAll(r => r.Release.Id));
+        }
+
+        [Fact]
+        public void Order_IgnoresCountry_AfterCountryPreferenceMovedToReleaseGroupScoring()
+        {
+            // 搜索阶段不再做国家偏好:候选的国家只作为普通字段,不参与排序。
+            // 两者状态/主类型/日期/score/标题全同,只剩 id 决定次序 —— 与请求顺序无关。
+            var gb = CreateScored("zzz", "Official", "Album", "2020-01-01", "GB", 100, "Alpha");
+            var us = CreateScored("aaa", "Official", "Album", "2020-01-01", "US", 100, "Alpha");
+
+            var ordered = SearchCandidateOrderingPolicy.Order([gb, us]);
+
+            Assert.Equal(new[] { "aaa", "zzz" }, ordered.ConvertAll(r => r.Release.Id));
         }
 
         private static ScoredRelease CreateScored(

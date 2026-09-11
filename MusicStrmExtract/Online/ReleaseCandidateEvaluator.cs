@@ -12,11 +12,11 @@ internal sealed class ReleaseCandidateEvaluator(IMusicBrainzApi api)
         CancellationToken ct)
     {
         var releaseId = release.Id;
-        if (string.IsNullOrWhiteSpace(releaseId) || evaluatedReleaseIds.Contains(releaseId))
+        // 无 id 无法取详情;已评估过则跳过,避免同一 release 被重复请求。
+        if (string.IsNullOrWhiteSpace(releaseId) || !evaluatedReleaseIds.Add(releaseId))
             return null;
 
         var parsed = await _api.GetReleaseAsync(releaseId, ct).ConfigureAwait(false);
-        _ = evaluatedReleaseIds.Add(releaseId);
         if (parsed.Medias.Count == 0)
             return null;
 

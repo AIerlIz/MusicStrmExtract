@@ -91,34 +91,18 @@ public sealed class MusicBrainzApi : IMusicBrainzApi
         CancellationToken ct)
     {
         var releases = group.Releases.ToList();
-        var seen = new HashSet<string>(
-            releases
-                .Select(r => r.Id)
-                .Where(id => !string.IsNullOrWhiteSpace(id))
-                .Select(id => id!),
-            StringComparer.OrdinalIgnoreCase);
+        var seen = CreateSeenReleaseIds(releases);
         var offset = LinkedReleaseLookupLimit;
 
         while (true)
         {
-            var browseUrl = MusicBrainzUrlBuilder.BrowseReleases(
-                _baseUrl,
-                rgMbid,
-                offset,
-                BrowsePageSize);
-            var (totalCount, page) = ReleaseJsonReader.ParseBrowseReleases(
-                await _requestExecutor.GetJsonRootAsync(browseUrl, ct).ConfigureAwait(false));
+            var page = await BrowseReleasePageAsync(rgMbid, offset, ct).ConfigureAwait(false);
+            AppendNewReleases(page.Releases, seen, releases);
 
-            foreach (var release in page)
-            {
-                if (!string.IsNullOrWhiteSpace(release.Id) && seen.Add(release.Id))
-                    releases.Add(release);
-            }
-
-            if (page.Count == 0 || releases.Count >= totalCount)
+            if (page.Releases.Count == 0 || releases.Count >= page.TotalCount)
                 break;
 
-            offset += page.Count;
+            offset += page.Releases.Count;
         }
 
         return new ParsedReleaseGroup(
@@ -128,6 +112,40 @@ public sealed class MusicBrainzApi : IMusicBrainzApi
             group.Disambiguation,
             group.ArtistCredits,
             [.. releases]);
+    }
+
+    /// <summary>已见过的 release id 集合(忽略大小写、跳过空 id),用于分页去重。</summary>
+    private static HashSet<string> CreateSeenReleaseIds(IEnumerable<ReleaseSummary> releases)
+    {
+        return new HashSet<string>(
+            releases
+                .Select(r => r.Id)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id!),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private async Task<(int TotalCount, IReadOnlyList<ReleaseSummary> Releases)> BrowseReleasePageAsync(
+        string rgMbid,
+        int offset,
+        CancellationToken ct)
+    {
+        var browseUrl = MusicBrainzUrlBuilder.BrowseReleases(_baseUrl, rgMbid, offset, BrowsePageSize);
+        return ReleaseJsonReader.ParseBrowseReleases(
+            await _requestExecutor.GetJsonRootAsync(browseUrl, ct).ConfigureAwait(false));
+    }
+
+    /// <summary>把本页中首次出现的 release 追加到结果集,并登记进去重集合。</summary>
+    private static void AppendNewReleases(
+        IReadOnlyList<ReleaseSummary> page,
+        HashSet<string> seen,
+        List<ReleaseSummary> releases)
+    {
+        foreach (var release in page)
+        {
+            if (!string.IsNullOrWhiteSpace(release.Id) && seen.Add(release.Id))
+                releases.Add(release);
+        }
     }
 
     public void Dispose()

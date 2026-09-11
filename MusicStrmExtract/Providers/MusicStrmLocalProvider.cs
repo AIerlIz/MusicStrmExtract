@@ -66,18 +66,20 @@ public sealed class MusicStrmLocalProvider : ILocalMetadataProvider<Audio>
 
         // ===== 主路径:专辑轨道定位(艺人/专辑文件夹 → MB release tracklist;零远程探测)=====
         var (albumFolder, artistFolder, albumDir, discNumber) = StrmFileParser.GetFolderStructure(info.Path);
-        if (!string.IsNullOrWhiteSpace(albumFolder)
-            && !string.IsNullOrWhiteSpace(albumDir)
-            && await TryResolveByAlbumTrackAsync(
-                info, albumFolder, artistFolder, albumDir, discNumber, config, result, cancellationToken).ConfigureAwait(false))
-            return result;
+        if (!string.IsNullOrWhiteSpace(albumFolder) && !string.IsNullOrWhiteSpace(albumDir))
+        {
+            await TryResolveByAlbumTrackAsync(
+                info, albumFolder, artistFolder, albumDir, discNumber, config, result, cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         return result;
     }
 
     // ==================== 主路径:专辑轨道定位 ====================
 
-    private async Task<bool> TryResolveByAlbumTrackAsync(
+    /// <summary>按专辑轨道定位结果填充 result；无法定位时保持空结果，由 Emby 后续流程决定。</summary>
+    private async Task TryResolveByAlbumTrackAsync(
         ItemInfo info,
         string albumFolder,
         string? artistFolder,
@@ -89,38 +91,15 @@ public sealed class MusicStrmLocalProvider : ILocalMetadataProvider<Audio>
     {
         var (fileDisc, rawTrackNumber, isCommentary) = StrmFileParser.ParseFileName(info.Path);
         if (rawTrackNumber <= 0)
-            return false; // 本文件无轨号,无法按轨取数
+            return; // 本文件无轨号,无法按轨取数
 
         var scan = _albumDirectoryScanService.GetOrScan(albumDir, message => _logger.Warn(message));
         if (scan.Discs.Count == 0)
-            return false;
+            return;
 
-        AlbumSearchResult album;
-        try
-        {
-            album = await _albumResolutionService.ResolveAsync(
-                new AlbumResolutionRequest(
-                    albumFolder,
-                    artistFolder,
-                    scan.Discs,
-                    config.MusicBrainzBaseUrl),
-                ct).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is OperationCanceledException && ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
-        {
-            // MB 不可达/超时:不写缓存、不产生结果(条目保持现状)
-            _logger.Warn(
-                $"[Resolve] album=\"{albumFolder}\" artist=\"{artistFolder ?? string.Empty}\" " +
-                $"result=unavailable error=\"{ex.Message}\"");
-            return false;
-        }
-
-        if (!album.Found)
-            return false;
+        var album = await ResolveAlbumAsync(albumFolder, artistFolder, scan, config, ct).ConfigureAwait(false);
+        if (album is null || !album.Found)
+            return;
 
         var resolution = AudioTrackMetadataFactory.TryBuild(
             album,
@@ -131,7 +110,7 @@ public sealed class MusicStrmLocalProvider : ILocalMetadataProvider<Audio>
             rawTrackNumber,
             isCommentary);
         if (resolution is null)
-            return false;
+            return;
 
         result.Item = resolution.Item;
         result.HasMetadata = true;
@@ -141,6 +120,40 @@ public sealed class MusicStrmLocalProvider : ILocalMetadataProvider<Audio>
             $"[Track] album=\"{albumFolder}\" disc={resolution.Media.Position} " +
             $"track={resolution.Track.Number} title=\"{resolution.Track.Title}\" " +
             $"recordingId={resolution.Track.RecordingMbid}");
-        return true;
+    }
+
+    /// <summary>
+    /// 调用专辑定位服务。MusicBrainz 不可达/超时返回 null(不写缓存、不产生结果);
+    /// 用户取消则向上抛出,避免把取消吞成"未命中"并被缓存锁死。
+    /// </summary>
+    private async Task<AlbumSearchResult?> ResolveAlbumAsync(
+        string albumFolder,
+        string? artistFolder,
+        AlbumDirectoryScan scan,
+        PluginConfiguration config,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await _albumResolutionService.ResolveAsync(
+                new AlbumResolutionRequest(
+                    albumFolder,
+                    artistFolder,
+                    scan.Discs,
+                    config.MusicBrainzBaseUrl),
+                ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            // MB 不可达/超时:不写缓存、不产生结果(条目保持现状)
+            _logger.Warn(
+                $"[Resolve] album=\"{albumFolder}\" artist=\"{artistFolder ?? string.Empty}\" " +
+                $"result=unavailable error=\"{ex.Message}\"");
+            return null;
+        }
     }
 }

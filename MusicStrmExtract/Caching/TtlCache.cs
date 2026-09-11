@@ -23,9 +23,9 @@ public sealed class TtlCache<TValue>
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(ttl, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxEntries);
+        ArgumentNullException.ThrowIfNull(clock);
         _ttl = ttl;
         _maxEntries = maxEntries;
-        ArgumentNullException.ThrowIfNull(clock);
         _clock = clock;
         _map = new Dictionary<string, Node>(keyComparer ?? StringComparer.Ordinal);
     }
@@ -48,7 +48,7 @@ public sealed class TtlCache<TValue>
         lock (_gate)
         {
             var now = _clock();
-            ExpireOldest(now);
+            ExpireExpiredFromOldest(now);
 
             if (_map.TryGetValue(key, out var node))
             {
@@ -75,7 +75,7 @@ public sealed class TtlCache<TValue>
         lock (_gate)
         {
             var now = _clock();
-            ExpireOldest(now);
+            ExpireExpiredFromOldest(now);
 
             if (_map.TryGetValue(key, out var existing))
             {
@@ -84,24 +84,25 @@ public sealed class TtlCache<TValue>
 
             var node = new Node(key, value, now);
             _map.Add(key, node);
-            AddTail(node);
-            EvictWhileOverCapacity();
+            AppendToTail(node);
+            EvictOldestWhileOverCapacity();
         }
     }
 
-    private void ExpireOldest(DateTime now)
+    /// <summary>按插入序从最旧开始移除已过期条目,直到遇到第一个未过期条目。</summary>
+    private void ExpireExpiredFromOldest(DateTime now)
     {
         while (_head != null && now - _head.CreatedUtc >= _ttl)
             RemoveNode(_head);
     }
 
-    private void EvictWhileOverCapacity()
+    private void EvictOldestWhileOverCapacity()
     {
         while (_head != null && _map.Count > _maxEntries)
             RemoveNode(_head);
     }
 
-    private void AddTail(Node node)
+    private void AppendToTail(Node node)
     {
         if (_tail is null)
         {

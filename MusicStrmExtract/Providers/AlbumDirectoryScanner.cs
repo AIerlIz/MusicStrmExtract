@@ -21,21 +21,38 @@ internal sealed class AlbumDirectoryScan(
 /// </summary>
 internal static class AlbumDirectoryScanner
 {
+    /// <summary>无碟号的音轨在字典中统一使用该键。</summary>
+    private const int NoDiscKey = 0;
+
     public static AlbumDirectoryScan Scan(string albumDir, Action<string>? warning = null)
     {
-        // 解析结果中碟号只会是 null 或正整数,用 0 作为无碟号的字典键。
+        var rawGroups = CollectRawTrackGroups(albumDir, warning);
+
+        var discs = rawGroups
+            .Select(CreateNormalizedDisc)
+            .OrderBy(d => d.DiscNumber ?? int.MaxValue)
+            .ToList();
+
+        return new AlbumDirectoryScan(discs, rawGroups);
+    }
+
+    /// <summary>枚举专辑根目录与 Disc N 子目录，按碟号收集去重后的原始轨号。</summary>
+    private static Dictionary<int, List<TrackReference>> CollectRawTrackGroups(
+        string albumDir,
+        Action<string>? warning)
+    {
         var rawGroups = new Dictionary<int, List<TrackReference>>();
         var seen = new HashSet<(int Disc, int Track, bool Commentary)>();
 
         void AddTrack(int? disc, int number, bool isCommentary)
         {
-            var key = disc ?? 0;
+            var key = disc ?? NoDiscKey;
             if (number <= 0 || !seen.Add((key, number, isCommentary)))
                 return;
 
             if (!rawGroups.TryGetValue(key, out var list))
             {
-                list = new List<TrackReference>();
+                list = [];
                 rawGroups.Add(key, list);
             }
 
@@ -44,29 +61,13 @@ internal static class AlbumDirectoryScanner
 
         try
         {
-            foreach (var f in Directory.EnumerateFiles(albumDir))
-            {
-                if (!StrmFileParser.IsStrmPath(f))
-                    continue;
-
-                var (disc, number, isCommentary) = StrmFileParser.ParseFileName(f);
-                AddTrack(disc, number, isCommentary);
-            }
+            AddDirectoryTracks(albumDir, disc: null, AddTrack);
 
             foreach (var sub in Directory.EnumerateDirectories(albumDir))
             {
                 var disc = StrmFileParser.ParseDiscFolderName(Path.GetFileName(sub));
-                if (disc is null)
-                    continue;
-
-                foreach (var f in Directory.EnumerateFiles(sub))
-                {
-                    if (!StrmFileParser.IsStrmPath(f))
-                        continue;
-
-                    var (_, number, isCommentary) = StrmFileParser.ParseFileName(f);
-                    AddTrack(disc, number, isCommentary);
-                }
+                if (disc is not null)
+                    AddDirectoryTracks(sub, disc, AddTrack);
             }
         }
         catch (IOException ex)
@@ -76,45 +77,49 @@ internal static class AlbumDirectoryScanner
                 $"[Scan] albumDir=\"{albumDir}\" result=partial error=\"{ex.Message}\"");
         }
 
-        var result = new List<LocalDisc>();
-        foreach (var kv in rawGroups)
+        return rawGroups;
+    }
+
+    private static void AddDirectoryTracks(string directory, int? disc, Action<int?, int, bool> addTrack)
+    {
+        foreach (var file in Directory.EnumerateFiles(directory))
         {
-            var raw = kv.Value;
-            var commentaryNumbers = raw
-                .Where(r => r.IsCommentary)
-                .Select(r => r.Number)
-                .Where(n => n > 0)
-                .Distinct()
-                .OrderBy(n => n)
-                .ToArray();
-            var regularNumbers = raw
-                .Where(r => !r.IsCommentary)
-                .Select(r => r.Number)
-                .Where(n => n > 0)
-                .Distinct()
-                .OrderBy(n => n)
-                .ToArray();
-            var group = new LocalDisc { DiscNumber = kv.Key == 0 ? null : kv.Key };
-            group.TrackNumbers.AddRange(raw
-                .Select(r => StrmFileParser.MapCommentaryTrackNumberNormalized(
-                    r.Number,
-                    r.IsCommentary,
-                    commentaryNumbers,
-                    regularNumbers))
-                .Where(n => n > 0)
-                .Distinct());
-            result.Add(group);
+            if (!StrmFileParser.IsStrmPath(file))
+                continue;
+
+            var (_, number, isCommentary) = StrmFileParser.ParseFileName(file);
+            addTrack(disc, number, isCommentary);
         }
+    }
 
-        result.Sort((a, b) =>
-        {
-            var an = a.DiscNumber ?? int.MaxValue;
-            var bn = b.DiscNumber ?? int.MaxValue;
-            return an.CompareTo(bn);
-        });
-        foreach (var g in result)
-            g.TrackNumbers.Sort();
+    /// <summary>把一个碟组的原始轨号归一化为官方轨号集合（升序、去重）。</summary>
+    private static LocalDisc CreateNormalizedDisc(KeyValuePair<int, List<TrackReference>> rawGroup)
+    {
+        var raw = rawGroup.Value;
+        var commentaryNumbers = SelectSortedNumbers(raw, isCommentary: true);
+        var regularNumbers = SelectSortedNumbers(raw, isCommentary: false);
 
-        return new AlbumDirectoryScan(result, rawGroups);
+        var disc = new LocalDisc { DiscNumber = rawGroup.Key == NoDiscKey ? null : rawGroup.Key };
+        disc.TrackNumbers.AddRange(raw
+            .Select(r => StrmFileParser.MapCommentaryTrackNumberNormalized(
+                r.Number,
+                r.IsCommentary,
+                commentaryNumbers,
+                regularNumbers))
+            .Where(n => n > 0)
+            .Distinct());
+        disc.TrackNumbers.Sort();
+        return disc;
+    }
+
+    private static int[] SelectSortedNumbers(List<TrackReference> raw, bool isCommentary)
+    {
+        return raw
+            .Where(r => r.IsCommentary == isCommentary)
+            .Select(r => r.Number)
+            .Where(n => n > 0)
+            .Distinct()
+            .OrderBy(n => n)
+            .ToArray();
     }
 }

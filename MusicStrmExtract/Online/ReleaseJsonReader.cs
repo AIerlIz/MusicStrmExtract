@@ -6,6 +6,21 @@ namespace MusicStrmExtract.Online;
 /// <summary>把 MusicBrainz release JSON 解析成强类型候选,JSON 不再泄漏到选版/评分逻辑。</summary>
 internal static class ReleaseJsonReader
 {
+    /// <summary>JSON 不是对象时的空 release 候选,避免在多处重复列出全 null 参数。</summary>
+    private static readonly ReleaseSummary EmptyRelease = new(
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        [],
+        []);
+
     public static List<ScoredRelease> ParseSearchReleases(JsonElement root)
     {
         var result = new List<ScoredRelease>();
@@ -45,21 +60,7 @@ internal static class ReleaseJsonReader
     public static ReleaseSummary ParseRelease(JsonElement release)
     {
         if (release.ValueKind != JsonValueKind.Object)
-        {
-            return new ReleaseSummary(
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                [],
-                []);
-        }
+            return EmptyRelease;
 
         return new ReleaseSummary(
             GetString(release, "id"),
@@ -118,17 +119,19 @@ internal static class ReleaseJsonReader
 
     private static string? GetPrimaryType(JsonElement release)
     {
-        if (release.TryGetProperty("release-group", out var rg))
-            return GetString(rg, "primary-type");
-
-        return null;
+        return GetReleaseGroupProperty(release, "primary-type");
     }
 
     private static string? GetReleaseGroupMbid(JsonElement release)
     {
-        if (release.TryGetProperty("release-group", out var rg))
-            return GetString(rg, "id");
+        return GetReleaseGroupProperty(release, "id");
+    }
 
-        return null;
+    /// <summary>读取 release 内嵌 release-group 子对象的指定字段(search 响应形态)。</summary>
+    private static string? GetReleaseGroupProperty(JsonElement release, string property)
+    {
+        return release.TryGetProperty("release-group", out var rg)
+            ? GetString(rg, property)
+            : null;
     }
 }

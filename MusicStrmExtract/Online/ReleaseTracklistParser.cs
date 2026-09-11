@@ -20,57 +20,75 @@ internal static class ReleaseTracklistParser
         if (!releaseRoot.TryGetProperty("media", out var mediaArr) || mediaArr.ValueKind != JsonValueKind.Array)
             return medias;
 
-        foreach (var m in mediaArr.EnumerateArray())
+        foreach (var media in mediaArr.EnumerateArray())
         {
-            var tracks = new List<AlbumTrack>();
-            if (m.TryGetProperty("tracks", out var tracksJson) && tracksJson.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var t in tracksJson.EnumerateArray())
-                {
-                    var numberText = GetString(t, "number");
-                    var number = int.TryParse(numberText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n)
-                        ? n
-                        : GetInt(t, "position");
-                    if (number <= 0)
-                        continue;
+            var tracks = ParseTracks(media);
+            if (tracks.Count == 0)
+                continue;
 
-                    var title = GetString(t, "title");
-                    string? recordingMbid = null;
-                    var artists = new List<string>();
-                    string? artistMbid = null;
-                    if (t.TryGetProperty("recording", out var rec))
-                    {
-                        recordingMbid = GetString(rec, "id");
-                        title ??= GetString(rec, "title");
-                        foreach (var credit in GetArtistCredits(rec, includeNameOnlyCredits: false))
-                        {
-                            if (!string.IsNullOrWhiteSpace(credit.Name))
-                                artists.Add(credit.Name!);
-
-                            if (artistMbid is null && !string.IsNullOrWhiteSpace(credit.Id))
-                                artistMbid = credit.Id;
-                        }
-                    }
-
-                    tracks.Add(new AlbumTrack(
-                        number,
-                        title,
-                        recordingMbid,
-                        artistMbid,
-                        [.. artists]));
-                }
-            }
-
-            tracks.Sort((a, b) => a.Number.CompareTo(b.Number));
-            if (tracks.Count > 0)
-            {
-                medias.Add(new ReleaseMedia(
-                    GetInt(m, "position"),
-                    GetString(m, "format"),
-                    [.. tracks]));
-            }
+            medias.Add(new ReleaseMedia(
+                GetInt(media, "position"),
+                GetString(media, "format"),
+                tracks));
         }
 
         return medias;
+    }
+
+    /// <summary>解析单张 media 的轨道并按轨号升序返回;无有效轨道时返回空列表。</summary>
+    private static List<AlbumTrack> ParseTracks(JsonElement media)
+    {
+        var tracks = new List<AlbumTrack>();
+        if (!media.TryGetProperty("tracks", out var tracksJson) || tracksJson.ValueKind != JsonValueKind.Array)
+            return tracks;
+
+        foreach (var track in tracksJson.EnumerateArray())
+        {
+            var parsed = ParseTrack(track);
+            if (parsed is not null)
+                tracks.Add(parsed);
+        }
+
+        tracks.Sort((a, b) => a.Number.CompareTo(b.Number));
+        return tracks;
+    }
+
+    /// <summary>解析单条轨道;轨号缺失或非正时返回 null(该轨跳过)。</summary>
+    private static AlbumTrack? ParseTrack(JsonElement track)
+    {
+        var number = ResolveTrackNumber(track);
+        if (number <= 0)
+            return null;
+
+        var title = GetString(track, "title");
+        string? recordingMbid = null;
+        string? artistMbid = null;
+        var artists = new List<string>();
+
+        if (track.TryGetProperty("recording", out var recording))
+        {
+            recordingMbid = GetString(recording, "id");
+            title ??= GetString(recording, "title");
+
+            foreach (var credit in GetArtistCredits(recording, includeNameOnlyCredits: false))
+            {
+                if (!string.IsNullOrWhiteSpace(credit.Name))
+                    artists.Add(credit.Name!);
+
+                if (artistMbid is null && !string.IsNullOrWhiteSpace(credit.Id))
+                    artistMbid = credit.Id;
+            }
+        }
+
+        return new AlbumTrack(number, title, recordingMbid, artistMbid, [.. artists]);
+    }
+
+    /// <summary>轨号优先取 number 字符串,回退到 position 字段。</summary>
+    private static int ResolveTrackNumber(JsonElement track)
+    {
+        var numberText = GetString(track, "number");
+        return int.TryParse(numberText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number)
+            ? number
+            : GetInt(track, "position");
     }
 }

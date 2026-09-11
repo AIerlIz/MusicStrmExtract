@@ -7,6 +7,21 @@ namespace MusicStrmExtract.Online;
 /// <summary>读取 MusicBrainz JSON (System.Text.Json) 的通用只读辅助,避免在多处重复实现。</summary>
 internal static class JsonUtil
 {
+    /// <summary>
+    /// 缺失/空白发行日期在排序中的哨兵值,必须排在所有真实 ISO 日期之后。
+    /// 年份距离与日期字符串两处比较共用同一约定,不要在调用点硬编码 "9999"。
+    /// </summary>
+    public const string MissingDateSentinel = "9999";
+
+    /// <summary>空白/缺失日期归一为哨兵值,使各处"缺失即排最后"采用同一套语义。</summary>
+    public static string NormalizeDate(string? date)
+    {
+        if (string.IsNullOrWhiteSpace(date))
+            return MissingDateSentinel;
+
+        return date;
+    }
+
     public static string? GetString(JsonElement element, string property)
     {
         if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value)

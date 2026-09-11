@@ -23,33 +23,28 @@ internal sealed class LegacyAlbumRepairService
     private readonly RepairExecutor _repairExecutor;
     private int _isRunning;
 
+    /// <summary>生产构造:从 Emby 服务解析出的依赖组装删除/刷新委托。</summary>
     public LegacyAlbumRepairService(
         ILogManager logManager,
         ILibraryManager libraryManager,
         IProviderManager providerManager,
         IFileSystem fileSystem)
-    {
-        _isScanRunning = () => libraryManager.IsScanRunning;
-        _getAudios = () => libraryManager
-            .GetItemList(CreateItemQuery(nameof(Audio)))
-            .OfType<Audio>()
-            .ToList();
-        _getMusicAlbums = () => libraryManager
-            .GetItemList(CreateItemQuery(nameof(MusicAlbum)))
-            .OfType<MusicAlbum>()
-            .ToList();
-        _repairExecutor = new RepairExecutor(
+        : this(
             logManager.GetLogger("MusicStrmExtract"),
-            _isScanRunning,
+            () => libraryManager.IsScanRunning,
+            () => libraryManager.GetItemList(CreateItemQuery(nameof(Audio))).OfType<Audio>().ToList(),
+            () => libraryManager.GetItemList(CreateItemQuery(nameof(MusicAlbum))).OfType<MusicAlbum>().ToList(),
             album => libraryManager.DeleteItem(album, new DeleteOptions
             {
                 DeleteFileLocation = false,
                 DeleteFromExternalProvider = false
             }),
             (id, options) => providerManager.QueueRefresh(id, options, RefreshPriority.High),
-            fileSystem);
+            fileSystem)
+    {
     }
 
+    /// <summary>测试构造:显式注入全部外部副作用。</summary>
     internal LegacyAlbumRepairService(
         ILogger logger,
         Func<bool> isScanRunning,

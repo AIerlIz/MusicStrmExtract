@@ -213,6 +213,32 @@ namespace MusicStrmExtract.Tests
             Assert.Equal("tw", result.ReleaseMbid);
         }
 
+        [Fact]
+        public async Task SearchForTrackMapAsync_SelectsAnchorByScore_NotByCountry()
+        {
+            // 搜索阶段的锚点选择不得受国家偏好影响(国家偏好已下沉到组内选版)。
+            // 高分候选 country=US,低分候选 country=TW;即便此时偏好国推断为 TW,
+            // 锚点也必须由 score 决定,即请求 rg-1 而非 rg-2。
+            var api = new FakeMusicBrainzApi
+            {
+                SearchJson = "{\"releases\":[" +
+                    SearchReleaseJsonWithCountry("highUs", "rg-1", 100, "US") + "," +
+                    SearchReleaseJsonWithCountry("lowOther", "rg-2", 10, "TW") +
+                    "]}",
+                RgJson = RgReleases(("us1", "US", "AAA", "2014-10-27"), ("us2", "US", "BBB", "2014-10-27"), ("tw1", "TW", "CCC", "2014-10-27"))
+            };
+            api.ReleaseDetails["us1"] = ReleaseDetail("us1", "1989", "US", 13, "2014-10-27");
+            api.ReleaseDetails["us2"] = ReleaseDetail("us2", "1989", "US", 13, "2014-10-27");
+            api.ReleaseDetails["tw1"] = ReleaseDetail("tw1", "1989", "TW", 13, "2014-10-27");
+
+            var result = await RunAsync(api);
+
+            Assert.True(result.Found);
+            // 关键断言:锚点由分数(100 的 US 候选)选出,不受国家偏好影响。
+            Assert.Equal("rg-1", api.RequestedReleaseGroups[0]);
+            Assert.Equal("rg-1", result.ReleaseGroupMbid);
+        }
+
         private static async Task<AlbumSearchResult> RunAsync(FakeMusicBrainzApi api)
         {
             var local = new LocalDisc();
@@ -279,8 +305,13 @@ namespace MusicStrmExtract.Tests
 
         private static string SearchReleaseJson(string id, string rgId, int score)
         {
+            return SearchReleaseJsonWithCountry(id, rgId, score, "US");
+        }
+
+        private static string SearchReleaseJsonWithCountry(string id, string rgId, int score, string country)
+        {
             return $"{{\"id\":\"{id}\",\"score\":{score},\"title\":\"1989\",\"date\":\"2014-10-27\"," +
-                   $"\"status\":\"Official\",\"country\":\"US\",\"artist-credit\":[]," +
+                   $"\"status\":\"Official\",\"country\":\"{country}\",\"artist-credit\":[]," +
                    $"\"release-group\":{{\"id\":\"{rgId}\"}}}}";
         }
 
@@ -327,6 +358,9 @@ namespace MusicStrmExtract.Tests
 
             public int ReleaseDetailCalls { get; private set; }
 
+            /// <summary>按调用顺序记录被请求的 release-group id,用于断言搜索阶段选中的锚点。</summary>
+            public List<string> RequestedReleaseGroups { get; } = new List<string>();
+
             public Task<IReadOnlyList<ScoredRelease>> SearchReleasesAsync(
                 string album,
                 string? artist,
@@ -338,7 +372,10 @@ namespace MusicStrmExtract.Tests
             public Task<ParsedReleaseGroup> GetReleaseGroupAsync(
                 string rgMbid,
                 CancellationToken ct)
-                => Task.FromResult(ReleaseJsonReader.ParseReleaseGroup(Parse(RgJson)));
+            {
+                RequestedReleaseGroups.Add(rgMbid);
+                return Task.FromResult(ReleaseJsonReader.ParseReleaseGroup(Parse(RgJson)));
+            }
 
             public Task<ParsedRelease> GetReleaseAsync(string releaseMbid, CancellationToken ct)
             {
