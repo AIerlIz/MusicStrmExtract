@@ -272,6 +272,25 @@ namespace MusicStrmExtract.Tests
         }
 
         [Fact]
+        public void ScoreAll_CountryRankBase_StrictlyLessThanYearGapStep()
+        {
+            // 量级契约的数值级锁定:国家层权重必须严格小于年份层"最小步进"(相邻年份差 1 = YearGapRankBase)。
+            // 构造偏好国(US)年份差 1 vs 非偏好国(JP)年份差 0 的相邻场景:
+            //  - 契约成立(CountryRankBase < YearGapRankBase):JP 免国家惩罚,年份更近 → JP 胜出;
+            //  - 契约被违反(CountryRankBase >= YearGapRankBase):US 的国家惩罚不足以抵消 1 个单位年份差上的优势,
+            //    国家层翻越年份层 → US 胜出,本测试失败。
+            // 这是 方案 B"数值即唯一控制点"能否拦住契约违规的关键测试。
+            var rg = BuildRgJson(
+                ("preferredFar", "Official", "ABC", "US", "2005-06-01", true), // 年份差 1
+                ("foreignNear", "Official", "ABC", "JP", "2004-06-01", true)); // 年份差 0
+
+            var scored = ReleaseGroupScorer.ScoreAll(rg, localYear: 2004, preferredCountry: "US");
+
+            Assert.Equal("foreignNear", scored[0].Release.Id);
+            Assert.True(scored[0].Rank < scored[1].Rank);
+        }
+
+        [Fact]
         public void ScoreAll_CountryLayer_DoesNotCrossYearGapLayer()
         {
             // 量级契约的行为化锁定:偏好国版本虽然免于国家惩罚,但年份差距更大时,
@@ -285,6 +304,22 @@ namespace MusicStrmExtract.Tests
 
             // US 版本年份差 6,JP 版本年份差 1;国家惩罚不足以让 US 翻越年份层。
             Assert.Equal("foreignNear", scored[0].Release.Id);
+            Assert.True(scored[0].Rank < scored[1].Rank);
+        }
+
+        [Fact]
+        public void ScoreAll_StatusLayer_DoesNotCrossYearGapLayer()
+        {
+            // 状态层的隔离锁定:Official 但年份差最远(9999) 必须仍排在
+            // Bootleg 但年份差 0(最近) 之前 —— 锁定 StatusRankBase > YearGapRankBase × MissingYearDistance。
+            // 当前该隔离完全没有测试,若有人调小 StatusRankBase 使年份层能翻越状态层,本测试失败。
+            var rg = BuildRgJson(
+                ("officialFar", "Official", "ABC", "US", null, true),   // 无日期 → 年份差 = MissingYearDistance(9999)
+                ("bootlegNear", "Bootleg", "ABC", "US", "2004-08-03", true)); // 年份差 0(最贴近)
+
+            var scored = ReleaseGroupScorer.ScoreAll(rg, localYear: 2004);
+
+            Assert.Equal("officialFar", scored[0].Release.Id);
             Assert.True(scored[0].Rank < scored[1].Rank);
         }
 

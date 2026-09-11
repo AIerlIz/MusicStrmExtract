@@ -77,7 +77,9 @@ namespace MusicStrmExtract.Tests
             var scored = Assert.Single(releases);
             Assert.Equal(88, scored.Score);
             Assert.Equal("release-1", scored.Release.Id);
+            // 引号改为转义(%5C%22)而非删除;不得出现旧实现的连续 %22%22
             Assert.DoesNotContain("Chou%22%22", transport.LastUrl);
+            Assert.Contains("Jay%20%5C%22Chou%5C%22", transport.LastUrl);
             Assert.Contains("/ws/2/release?query=", transport.LastUrl);
         }
 
@@ -133,6 +135,83 @@ namespace MusicStrmExtract.Tests
             Assert.Contains("release?release-group=rg-1", transport.LastUrl);
         }
 
+        [Fact]
+        public async Task GetReleaseGroupAsync_RepeatedPageWithoutNewReleases_Terminates()
+        {
+            // 服务端恒返回同一批 25 条已见过的 release 且 count 虚高:
+            // 修复前 seen 去重使结果集不增长、两终止条件均不满足 → while(true) 死循环 + 无限 HTTP。
+            // 本测试在修复前会挂死,修复后(本页未新增即退出)必须有限时间内返回。
+            var samePage = string.Join(",", Enumerable.Range(0, 25).Select(n => ReleaseJson($"r{n}")));
+            var transport = new FakeTransport
+            {
+                UrlBody = url => url.Contains("/release-group/", StringComparison.Ordinal)
+                    ? $"{{\"id\":\"rg-1\",\"title\":\"Album\",\"primary-type\":\"Album\",\"artist-credit\":[],\"releases\":[{samePage}]}}"
+                    : $"{{\"count\":1000,\"offset\":25,\"releases\":[{samePage}]}}"
+            };
+            var gate = new CountingGate();
+            using var api = new MusicBrainzApi("https://mb.example", transport, gate);
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var group = await api.GetReleaseGroupAsync("rg-1", cts.Token);
+
+            // 未新增任何 release → 第一页 browse 后即退出;不得无限分页
+            Assert.Equal(25, group.Releases.Count);
+            Assert.Equal(2, transport.Calls); // 1 次 lookup + 1 次 browse
+        }
+
+        [Fact]
+        public async Task GetReleaseGroupAsync_ZeroTotalCount_StopsAfterFirstPage()
+        {
+            // count=0(服务端显式给出总数 0):releases.Count(25) >= 0 → 终止,不得继续分页。
+            // 本测试是"count=0 不得引发无限分页"的回归护栏(旧实现同样会停,属非鉴别性护栏)。
+            var firstPage = string.Join(",", Enumerable.Range(0, 25).Select(n => ReleaseJson($"r{n}")));
+            var transport = new FakeTransport
+            {
+                UrlBody = url => url.Contains("/release-group/", StringComparison.Ordinal)
+                    ? $"{{\"id\":\"rg-1\",\"title\":\"Album\",\"primary-type\":\"Album\",\"artist-credit\":[],\"releases\":[{firstPage}]}}"
+                    : $"{{\"count\":0,\"offset\":25,\"releases\":[]}}"
+            };
+            var gate = new CountingGate();
+            using var api = new MusicBrainzApi("https://mb.example", transport, gate);
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var group = await api.GetReleaseGroupAsync("rg-1", cts.Token);
+
+            Assert.Equal(25, group.Releases.Count);
+            Assert.Equal(2, transport.Calls);
+        }
+
+        [Fact]
+        public async Task GetReleaseGroupAsync_MissingCountField_DoesNotDropLaterPages()
+        {
+            // 响应无 count 字段:旧实现 GetInt 返回 0 → releases.Count >= 0 恒真 →
+            // 第 1 个 browse 页后立即退出,静默丢弃后续页(丢数据)。
+            // 新实现 total 未知时不作为终止依据,应继续按 offset 翻页直到空页。
+            var page0 = string.Join(",", Enumerable.Range(0, 25).Select(n => ReleaseJson($"r{n}")));
+            var page1 = string.Join(",", Enumerable.Range(25, 25).Select(n => ReleaseJson($"r{n}")));
+            var page2 = string.Join(",", Enumerable.Range(50, 5).Select(n => ReleaseJson($"r{n}")));
+            var transport = new FakeTransport
+            {
+                UrlBody = url => url.Contains("/release-group/", StringComparison.Ordinal)
+                    ? $"{{\"id\":\"rg-1\",\"title\":\"Album\",\"primary-type\":\"Album\",\"artist-credit\":[],\"releases\":[{page0}]}}"
+                    : url.Contains("offset=25", StringComparison.Ordinal)
+                        ? $"{{\"offset\":25,\"releases\":[{page1}]}}"                 // 无 count 字段
+                        : url.Contains("offset=50", StringComparison.Ordinal)
+                            ? $"{{\"offset\":50,\"releases\":[{page2}]}}"             // 无 count 字段
+                            : "{\"offset\":55,\"releases\":[]}"
+            };
+            var gate = new CountingGate();
+            using var api = new MusicBrainzApi("https://mb.example", transport, gate);
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var group = await api.GetReleaseGroupAsync("rg-1", cts.Token);
+
+            // 缺失 count 不截断后续页,全部 55 条都保留
+            Assert.Equal(55, group.Releases.Count);
+            Assert.Equal("r0", group.Releases[0].Id);
+            Assert.Equal("r54", group.Releases[^1].Id);
+        }
+
         private static string ReleaseJson(string id)
         {
             return $"{{\"id\":\"{id}\",\"title\":\"Album\",\"date\":\"2020-01-01\"," +
@@ -149,13 +228,20 @@ namespace MusicStrmExtract.Tests
 
             public string? LastUrl { get; private set; }
 
+            /// <summary>按 URL 决定响应体(与调用序号无关的旧用法)。</summary>
             public Func<string, string>? UrlBody { get; set; }
+
+            /// <summary>按 (URL, 本次调用序号) 决定响应体,优先级高于 <see cref="UrlBody"/>。</summary>
+            public Func<string, int, string>? UrlBodyWithCallIndex { get; set; }
 
             public Task<HttpResponse> GetAsync(string url, CancellationToken ct)
             {
                 Calls++;
                 LastUrl = url;
-                return Task.FromResult(new HttpResponse(StatusCode, UrlBody?.Invoke(url) ?? Body));
+                var body = UrlBodyWithCallIndex?.Invoke(url, Calls)
+                    ?? UrlBody?.Invoke(url)
+                    ?? Body;
+                return Task.FromResult(new HttpResponse(StatusCode, body));
             }
 
             public void Dispose()

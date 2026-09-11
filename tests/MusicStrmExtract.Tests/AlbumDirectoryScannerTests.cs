@@ -80,6 +80,64 @@ namespace MusicStrmExtract.Tests
             }
         }
 
+        [Fact]
+        public void Scan_UnauthorizedDirectory_DoesNotEscape()
+        {
+            // 权限异常(UnauthorizedAccessException)与 IOException 无继承关系,
+            // 修复前会逃逸到 Emby 调用栈导致整库扫描中断;修复后应降级为 partial。
+            // 仅在 Windows 上用 icacls 拒绝读取触发(其它平台直接跳过,避免误报)。
+            if (!OperatingSystem.IsWindows())
+                return;
+
+            var albumDir = CreateTempAlbum();
+            var denied = TryDenyReadAccess(albumDir);
+            if (!denied)
+                return; // 无法建立 ACL(权限不足等)时跳过,不产生假阳性
+
+            try
+            {
+                string? warning = null;
+                var scan = AlbumDirectoryScanner.Scan(albumDir, w => warning = w);
+
+                Assert.Empty(scan.Discs);
+                Assert.Empty(scan.RawTracks);
+                Assert.NotNull(warning);
+                Assert.Contains("result=partial", warning);
+            }
+            finally
+            {
+                TryRestoreAccess(albumDir);
+                Directory.Delete(albumDir, recursive: true);
+            }
+        }
+
+        /// <summary>用 icacls 拒绝 Everyone 读取目录;成功返回 true。仅 Windows 可用。</summary>
+        private static bool TryDenyReadAccess(string dir)
+        {
+            var (exitCode, _) = RunProcess("icacls", $"\"{dir}\" /deny *S-1-1-0:(RX)");
+            return exitCode == 0;
+        }
+
+        private static void TryRestoreAccess(string dir)
+        {
+            RunProcess("icacls", $"\"{dir}\" /remove:d *S-1-1-0");
+        }
+
+        private static (int ExitCode, string Output) RunProcess(string fileName, string arguments)
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo(fileName, arguments)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            using var process = System.Diagnostics.Process.Start(psi)!;
+            var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            return (process.ExitCode, output);
+        }
+
         private static string CreateTempAlbum()
         {
             var albumDir = Path.Combine(Path.GetTempPath(), "MusicStrmExtract-" + Guid.NewGuid().ToString("N"));
