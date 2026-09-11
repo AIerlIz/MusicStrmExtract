@@ -1,0 +1,15 @@
+# 新文件统一使用 LF,避免编辑器写入 CRLF 污染 diff。
+# 注意:不用 `text=auto` 全量重写,以免对既有文件产生大规模行尾 diff。
+# 若发现某文件在提交后出现"整文件重写"的 diff,先检查它是否被工具改成了 CRLF。
+*.cs text eol=lf
+*.md text eol=lf
+*.csproj text eol=lf
+*.json text eol=lf
+*.sln text eol=lf
+
+# 二进制文件不做行尾转换
+*.dll binary
+*.pdb binary
+*.png binary
+*.jpg binary
+*.ico binary
