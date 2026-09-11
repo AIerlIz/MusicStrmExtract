@@ -272,6 +272,80 @@ namespace MusicStrmExtract.Tests
         }
 
         [Fact]
+        public void ScoreAll_CountryLayer_DoesNotCrossYearGapLayer()
+        {
+            // 量级契约的行为化锁定:偏好国版本虽然免于国家惩罚,但年份差距更大时,
+            // 仍应排在"年份更贴近的非偏好国官方版"之后 —— 国家层不得翻越年份贴近层。
+            var rg = BuildRgJson(
+                ("preferredFar", "Official", "ABC", "US", "2010-06-01", true),
+                ("foreignNear", "Official", "ABC", "JP", "2005-06-01", true)
+            );
+
+            var scored = ReleaseGroupScorer.ScoreAll(rg, localYear: 2004, preferredCountry: "US");
+
+            // US 版本年份差 6,JP 版本年份差 1;国家惩罚不足以让 US 翻越年份层。
+            Assert.Equal("foreignNear", scored[0].Release.Id);
+            Assert.True(scored[0].Rank < scored[1].Rank);
+        }
+
+        [Fact]
+        public void ScoreAll_MultipleMissingDates_AllSortAfterRealDates()
+        {
+            // 缺失日期与真实日期的混合场景:两张缺失日期的候选应稳定排在真实日期之后,
+            // 且彼此之间按 id 稳定(缺失日期统一归一到同一哨兵值)。
+            var rg = BuildRgJson(
+                ("dated", "Official", "ABC", "US", "2004-08-03", true),
+                ("undatedB", "Official", "ABC", "US", null, true),
+                ("undatedA", "Official", "ABC", "US", null, true)
+            );
+
+            var scored = ReleaseGroupScorer.ScoreAll(rg, localYear: 2004);
+
+            Assert.Equal("dated", scored[0].Release.Id);
+            Assert.Equal("undatedA", scored[1].Release.Id);
+            Assert.Equal("undatedB", scored[2].Release.Id);
+        }
+
+        [Fact]
+        public void ScoreAll_PreferredCountryAbsent_PreservesRelativeOrder()
+        {
+            // 惩罚式设计的核心保证:候选里没有偏好国时,所有官方版都被同等推后一步,
+            // 因此相对顺序必须与"完全不启用国家层"时完全一致(惩罚是对称的,不会改变序)。
+            // 这防止有人改成"给偏好国加分"——那样无匹配国家时层内退化为恒等,
+            // 与不启用路径的行为假设分叉。
+            var rg = BuildRgJson(
+                ("jp", "Official", "ABC", "JP", "2004-08-03", true),
+                ("gb", "Official", "ABC", "GB", "2005-08-03", true)
+            );
+
+            var withoutPreference = ReleaseGroupScorer.ScoreAll(rg, localYear: 2004);
+            var withUnmatchedPreference = ReleaseGroupScorer.ScoreAll(
+                rg,
+                localYear: 2004,
+                preferredCountry: "US");
+
+            Assert.Equal(
+                withoutPreference.Select(r => r.Release.Id),
+                withUnmatchedPreference.Select(r => r.Release.Id));
+        }
+
+        [Fact]
+        public void ScoreAll_PreferenceOnlyPenalizesOfficialReleases()
+        {
+            // 非官方版本不参与国家层:偏好国里的 Bootleg 不应因"恰好在偏好国"而获得相对优势,
+            // 非偏好国的官方版也仍应按状态层稳定胜出。
+            var rg = BuildRgJson(
+                ("bootPreferred", "Bootleg", "ABC", "US", "2004-08-03", true),
+                ("officialForeign", "Official", "ABC", "GB", "2004-08-03", true)
+            );
+
+            var scored = ReleaseGroupScorer.ScoreAll(rg, localYear: 2004, preferredCountry: "US");
+
+            Assert.Equal("officialForeign", scored[0].Release.Id);
+            Assert.True(scored[0].Rank < scored[1].Rank);
+        }
+
+        [Fact]
         public void InferPreferredCountry_IgnoresWorldwideDigitalReleases()
         {
             // XW 的 24bit/2024 数字版即使带 barcode 也不参与国家推断，
