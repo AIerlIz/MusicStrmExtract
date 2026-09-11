@@ -50,6 +50,46 @@ public class EmbyE2eTests
         Assert.True(plugin.Version!.Major >= 1, "Plugin version should be >= 1.x");
     }
 
+    /// <summary>
+    /// Emby 会把 plugins 目录下所有 *.dll 都当作插件加载。若部署时留下了 .dll 结尾的旧版本备份，
+    /// 同一个 GUID 会被注册多次，且注册顺序取决于文件名，实际生效的可能是旧版本。
+    /// 这个测试锁定「同一 GUID 只出现一次」，防止旧版备份被误加载后静默回退。
+    /// </summary>
+    [EmbyFact]
+    public async Task Plugin_Should_Be_Registered_Exactly_Once()
+    {
+        using var http = CreateClient();
+        var plugins = await http.GetFromJsonAsync<PluginInfo[]>("Plugins")
+            ?? throw new InvalidOperationException("No plugins returned");
+        var mine = plugins.Where(p => p.Id == PluginGuid).ToArray();
+        Assert.True(
+            mine.Length == 1,
+            $"Plugin {PluginGuid} registered {mine.Length} times (expected 1). Versions: {string.Join(", ", mine.Select(p => p.Version))}. "
+            + "检查 plugins 目录下是否有 .dll 结尾的旧版本备份被 Emby 一并加载。");
+    }
+
+    /// <summary>
+    /// 断言实装版本与源码版本一致，避免「改了 csproj 却没同步部署」或
+    /// 「部署了旧 DLL」这类静默漂移。版本号来源为运行中进程自报，不读磁盘文件。
+    /// </summary>
+    [EmbyFact]
+    public async Task Plugin_Installed_Version_Should_Match_Assembly_Version()
+    {
+        using var http = CreateClient();
+        var plugins = await http.GetFromJsonAsync<PluginInfo[]>("Plugins")
+            ?? throw new InvalidOperationException("No plugins returned");
+        var plugin = plugins.Single(p => p.Id == PluginGuid);
+        var expected = typeof(MusicStrmExtract.Plugin).Assembly.GetName().Version;
+        Assert.NotNull(expected);
+        Assert.NotNull(plugin.Version);
+        Assert.True(
+            plugin.Version!.Major == expected!.Major
+                && plugin.Version.Minor == expected.Minor
+                && plugin.Version.Build == expected.Build,
+            $"Installed plugin version {plugin.Version} does not match assembly version {expected}. "
+            + "Emby 可能仍在加载旧 DLL，或部署未同步。");
+    }
+
     #endregion
 
     #region Audio Item Verification
