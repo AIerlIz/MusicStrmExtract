@@ -43,7 +43,7 @@
 - **国家偏好只属于选版阶段**。`SearchCandidateOrderingPolicy.Order` 刻意不接受国家参数，不要在搜索阶段重新引入（候选可能分属不同专辑，国家偏好在"选专辑"层面没有语义）。`InferPreferredCountry` 只在 `TryResolveFromReleaseGroupAsync` 的组内评分里调用一次。
 - RG 分层顺序为状态 → 年份贴近 → 国家偏好 → 日期；残余同分在 `ReleaseGroupScorer.ScoreAll` 内按日期 → 质量分 → release id 稳定排序，不再依赖封面图。
 - 国家层是「惩罚式硬优先级」，不是「奖励式软倾斜」：`IsForeignOfficial` 只给「官方状态且国家不等于偏好国」的候选 `+CountryRankBase`，偏好国本身不加分。这样候选里没有偏好国时，所有官方版被同等推后，相对顺序与不启用国家层完全一致。不要改成给偏好国加分（无匹配国家时会与不启用路径分叉）。
-- 国家层权重存在量级契约：`CountryRankBase < YearGapRankBase`，由 `ReleaseGroupScorer.RankLayersAreIsolated` 记录并由 `ReleaseGroupScorerTests` 的行为测试锁定。`CountryRankBase` 一旦调到 ≥ `YearGapRankBase`，国家偏好就会翻越年份贴近层；想做成「轻微倾斜」必须新增独立比较维度，而不是改这个数值。
+- 国家层权重存在量级契约：`CountryRankBase < YearGapRankBase`，由 `ReleaseGroupScorerTests.ScoreAll_CountryLayer_DoesNotCrossYearGapLayer` 与 `ReleaseGroupScorerTests.ScoreAll_CountryRankBase_StrictlyLessThanYearGapStep` 两个行为测试锁定（后者用相邻年份差场景，是真正能拦住数值违规的那条）。`BuildRank` 刻意不设运行时短路开关，数值本身是唯一控制点：`CountryRankBase` 一旦调到 ≥ `YearGapRankBase`，国家偏好就会翻越年份贴近层，测试会直接失败而不是静默降级；想做成「轻微倾斜」必须新增独立比较维度，而不是改这个数值。
 - 缺失日期语义只在 `JsonUtil.NormalizeDate` / `JsonUtil.MissingDateSentinel` 一处定义，搜索排序与组内评分共用。不要在调用点硬编码 `"9999"`。年份距离的 `MissingYearDistance` 与它同义但服务于数值型比较，改动时两者一起看。
 - 国家偏好只影响官方版本，不能把 Bootleg/Pseudo/Withdrawn 的低状态版本抬到官方版本之上。
 - 搜索候选状态排序与 RG 评分统一在 `ReleaseStatusPolicy.SearchPriority` / `ScoreWeight` 维护，不要另写一套字符串分类；修改优先级时同步 `ReleaseStatusPolicyTests`、`AlbumSearchSelectionTests`、`SearchCandidateOrderingPolicyTests` 和 `ReleaseGroupScorerTests`。
