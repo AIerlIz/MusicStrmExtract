@@ -1,15 +1,22 @@
-# 新文件统一使用 LF,避免编辑器写入 CRLF 污染 diff。
-# 注意:不用 `text=auto` 全量重写,以免对既有文件产生大规模行尾 diff。
-# 若发现某文件在提交后出现"整文件重写"的 diff,先检查它是否被工具改成了 CRLF。
+# 行尾统一为 LF。
+# 仓库历史中绝大多数文件已以 LF 存储;个别文件(如部分测试)曾以 CRLF 存储,
+# 且工作区常被编辑器写入 CRLF,导致出现"整文件重写"的虚假 diff。
+# 此处显式声明,让 git 主动归一化,并在提交时提示需要更新的文件。
 *.cs text eol=lf
 *.md text eol=lf
 *.csproj text eol=lf
+*.props text eol=lf
+*.targets text eol=lf
 *.json text eol=lf
 *.sln text eol=lf
+*.slnx text eol=lf
 
 # 二进制文件不做行尾转换
 *.dll binary
 *.pdb binary
 *.png binary
 *.jpg binary
+*.jpeg binary
+*.gif binary
 *.ico binary
+*.zip binary
