@@ -70,9 +70,11 @@ internal static class AlbumDirectoryScanner
                     AddDirectoryTracks(sub, disc, AddTrack);
             }
         }
-        catch (IOException ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // 目录读取失败时返回已收集到的碟组;部分已收集的数据仍可用于定位
+            // 目录读取失败时返回已收集到的碟组;部分已收集的数据仍可用于定位。
+            // UnauthorizedAccessException 与 IOException 无继承关系,若不显式捕获会逃逸到
+            // Emby 调用栈,可能导致整个媒体库扫描中断,故与 IOException 同等降级处理。
             warning?.Invoke(
                 $"[Scan] albumDir=\"{albumDir}\" result=partial error=\"{ex.Message}\"");
         }

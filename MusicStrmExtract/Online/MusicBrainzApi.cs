@@ -85,6 +85,11 @@ public sealed class MusicBrainzApi : IMusicBrainzApi
         return await LoadRemainingReleaseGroupReleasesAsync(group, rgMbid, ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// 分页硬上限。browse 每页 100 条,20 页即 2000 个 release,
+    /// 远超任何真实 release-group 的规模;仅作为"服务端异常/去重失效"时的兜底护栏。
+    /// </summary>
+    private const int MaxBrowsePages = 20;
     private async Task<ParsedReleaseGroup> LoadRemainingReleaseGroupReleasesAsync(
         ParsedReleaseGroup group,
         string rgMbid,
@@ -93,14 +98,26 @@ public sealed class MusicBrainzApi : IMusicBrainzApi
         var releases = group.Releases.ToList();
         var seen = CreateSeenReleaseIds(releases);
         var offset = LinkedReleaseLookupLimit;
+        var pages = 0;
 
         while (true)
         {
-            var page = await BrowseReleasePageAsync(rgMbid, offset, ct).ConfigureAwait(false);
-            AppendNewReleases(page.Releases, seen, releases);
+            ct.ThrowIfCancellationRequested();
 
-            if (page.Releases.Count == 0 || releases.Count >= page.TotalCount)
-                break;
+            var page = await BrowseReleasePageAsync(rgMbid, offset, ct).ConfigureAwait(false);
+            var added = AppendNewReleases(page.Releases, seen, releases);
+
+            if (page.Releases.Count == 0)
+                break; // 空页必然结束
+
+            if (page.TotalCount is int total && releases.Count >= total)
+                break; // 仅在服务端给出确切总数时作为终止依据;未知总数(count 缺失)不作为依据
+
+            if (added == 0)
+                break; // 本页未新增任何 release:服务端重复返回已见页,继续循环会死循环
+
+            if (++pages >= MaxBrowsePages)
+                break; // 硬上限兜底:至多 MaxBrowsePages(20)次 browse,与常量注释一致
 
             offset += page.Releases.Count;
         }
@@ -125,7 +142,7 @@ public sealed class MusicBrainzApi : IMusicBrainzApi
             StringComparer.OrdinalIgnoreCase);
     }
 
-    private async Task<(int TotalCount, IReadOnlyList<ReleaseSummary> Releases)> BrowseReleasePageAsync(
+    private async Task<(int? TotalCount, IReadOnlyList<ReleaseSummary> Releases)> BrowseReleasePageAsync(
         string rgMbid,
         int offset,
         CancellationToken ct)
@@ -135,17 +152,23 @@ public sealed class MusicBrainzApi : IMusicBrainzApi
             await _requestExecutor.GetJsonRootAsync(browseUrl, ct).ConfigureAwait(false));
     }
 
-    /// <summary>把本页中首次出现的 release 追加到结果集,并登记进去重集合。</summary>
-    private static void AppendNewReleases(
+    /// <summary>把本页中首次出现的 release 追加到结果集,并登记进去重集合;返回本页新增条数。</summary>
+    private static int AppendNewReleases(
         IReadOnlyList<ReleaseSummary> page,
         HashSet<string> seen,
         List<ReleaseSummary> releases)
     {
+        var added = 0;
         foreach (var release in page)
         {
             if (!string.IsNullOrWhiteSpace(release.Id) && seen.Add(release.Id))
+            {
                 releases.Add(release);
+                added++;
+            }
         }
+
+        return added;
     }
 
     public void Dispose()

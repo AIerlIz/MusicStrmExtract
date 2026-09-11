@@ -33,6 +33,15 @@ internal static class JsonUtil
 
     public static int GetInt(JsonElement element, string property)
     {
+        return GetIntNullable(element, property) ?? 0;
+    }
+
+    /// <summary>
+    /// 读取整数并区分"字段缺失/非数字"与"真的是 0":前者返回 <c>null</c>,后者返回 0。
+    /// 分页终止判定必须用本方法,否则缺失的 <c>count</c> 会被当成 0 而提前退出(静默丢数据)。
+    /// </summary>
+    public static int? GetIntNullable(JsonElement element, string property)
+    {
         if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value))
         {
             if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number))
@@ -43,7 +52,7 @@ internal static class JsonUtil
                 return parsed;
         }
 
-        return 0;
+        return null;
     }
 
     public static int? ParseYear(string? date)

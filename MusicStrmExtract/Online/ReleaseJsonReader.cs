@@ -30,9 +30,13 @@ internal static class ReleaseJsonReader
         return result;
     }
 
-    public static (int TotalCount, List<ReleaseSummary> Releases) ParseBrowseReleases(JsonElement root)
+    /// <summary>
+    /// 解析 browse 响应。<c>TotalCount</c> 为 <c>null</c> 表示 <c>count</c> 字段缺失/非数字,
+    /// 与"真的是 0"区分:调用方不得把未知总数当作终止依据,否则会提前退出丢弃后续页。
+    /// </summary>
+    public static (int? TotalCount, List<ReleaseSummary> Releases) ParseBrowseReleases(JsonElement root)
     {
-        return (GetInt(root, "count"), ParseReleaseSummaries(root));
+        return (GetIntNullable(root, "count"), ParseReleaseSummaries(root));
     }
 
     public static ParsedReleaseGroup ParseReleaseGroup(JsonElement root)

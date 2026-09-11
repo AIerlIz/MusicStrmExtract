@@ -73,6 +73,20 @@ public class Plugin : BasePluginSimpleUI<PluginConfiguration>, IHasThumbImage, I
         var configurationsPath = _applicationPaths.PluginConfigurationsPath;
         var jsonPath = Path.Combine(configurationsPath, $"{Name}.json");
         var legacyXmlPath = Path.Combine(configurationsPath, "MusicStrmExtract.xml");
+
+        MigrateLegacyXmlConfiguration(jsonPath, legacyXmlPath, SaveOptions);
+    }
+
+    /// <summary>
+    /// 迁移逻辑主体(可单测):jsonPath 已存在或旧 XML 不存在时直接返回;
+    /// 否则解析旧 XML 并交由 <paramref name="save"/> 落盘。解析/读取失败一律吞掉,
+    /// 不阻塞插件启动(旧 XML 保留原处可由用户手动迁移)。
+    /// </summary>
+    internal static void MigrateLegacyXmlConfiguration(
+        string jsonPath,
+        string legacyXmlPath,
+        Action<PluginConfiguration> save)
+    {
         if (File.Exists(jsonPath) || !File.Exists(legacyXmlPath))
         {
             return;
@@ -91,11 +105,13 @@ public class Plugin : BasePluginSimpleUI<PluginConfiguration>, IHasThumbImage, I
                 MusicBrainzBaseUrl = (string?)root.Element("MusicBrainzBaseUrl") ?? string.Empty
             };
 
-            SaveOptions(migrated);
+            save(migrated);
         }
-        catch (Exception ex) when (ex is XmlException or IOException)
+        catch (Exception ex) when (ex is XmlException or IOException or UnauthorizedAccessException)
         {
-            // 旧 XML 保留在原处,可由用户手动迁移,不阻塞插件启动
+            // 旧 XML 保留在原处,可由用户手动迁移,不阻塞插件启动。
+            // UnauthorizedAccessException 与 IOException 无继承关系:配置目录不可读时若不捕获会逃逸,
+            // 导致整个插件加载失败,与 M3 的加固理由一致(迁移失败不应让插件起不来)。
         }
     }
 }

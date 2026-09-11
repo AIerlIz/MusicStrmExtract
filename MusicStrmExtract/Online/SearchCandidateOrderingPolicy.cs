@@ -21,7 +21,7 @@ internal static class SearchCandidateOrderingPolicy
             .ThenBy(s => IsIncompleteDate(s.Release.Date) ? 1 : 0)
             .ThenBy(s => NormalizeDate(s.Release.Date), StringComparer.Ordinal)
             .ThenByDescending(s => s.Score)
-            .ThenBy(s => s.Release.Title!, StringComparer.Ordinal)
+            .ThenBy(s => s.Release.Title ?? string.Empty, StringComparer.Ordinal)
             .ThenBy(s => s.Release.Id ?? string.Empty, StringComparer.Ordinal)
             .ToList();
     }

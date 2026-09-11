@@ -23,16 +23,23 @@ public static class ReleaseGroupScorer
 
     private const long StatusRankBase = 1_000_000_000_000L;
     private const long YearGapRankBase = 100_000L;
-    private const long CountryRankBase = 1_000L;
-    private const int MissingYearDistance = 9999;
 
     /// <summary>
-    /// 分层权重必须严格满足的量级契约:低层权重的任何取值都不得跨越高层权重的最小步进,
-    /// 即国家层(最低的加权层)必须严格小于年份层的最小步进,否则国家偏好会翻越年份贴近层。
-    /// 年份层内部取值的上限由 <see cref="MissingYearDistance"/> 自行保证,与跨层隔离无关。
-    /// 契约由测试 <c>ReleaseGroupScorerTests.RankLayerBases_SatisfyIsolationContract</c> 锁定。
+    /// 偏好国家层(最底层)的权重。分层契约:低层权重的任何取值都不得跨越高层权重的最小步进,
+    /// 即国家层必须严格小于年份层的最小步进(<c>CountryRankBase &lt; YearGapRankBase</c>),
+    /// 否则国家偏好会翻越年份贴近层。年份层内部取值的上限由 <see cref="MissingYearDistance"/> 自行保证。
     /// </summary>
-    private const bool RankLayersAreIsolated = CountryRankBase < YearGapRankBase;
+    /// <remarks>
+    /// 该契约由测试 <c>ReleaseGroupScorerTests.ScoreAll_CountryRankBase_StrictlyLessThanYearGapStep</c>
+    /// (数值级:相邻年份差场景)与 <c>ReleaseGroupScorerTests.ScoreAll_CountryLayer_DoesNotCrossYearGapLayer</c> 锁定。
+    /// 刻意不引入运行时/<c>const</c> 短路开关:一旦 <see cref="BuildRank"/> 用该条件做开关,
+    /// 若此常量被调到 ≥ <see cref="YearGapRankBase"/>,开关会自动变 false,
+    /// 国家层将被静默永久置 0(功能整体消失),与维护者直觉相反,且编译期零警告。
+    /// 因此让数值本身成为唯一控制点,契约违规由测试暴露。
+    /// </remarks>
+    private const long CountryRankBase = 1_000L;
+
+    private const int MissingYearDistance = 9999;
 
     /// <summary>
     /// 对同 RG 下所有 release 分层排序。
@@ -204,7 +211,10 @@ public static class ReleaseGroupScorer
         // 非偏好国的官方版就会被整体推到偏好国之后,偏好国内部再按日期/质量分决出。
         // 因此不要为了做成"轻微倾斜"而调小 CountryRankBase —— 只要它 < YearGapRankBase,
         // 效果就恒为硬墙;真正想软化需改成单独的比较维度,而不是改权重数值。
-        var countryLayer = IsForeignOfficial(release, preferredCountry) && RankLayersAreIsolated
+        // 刻意不加 RankLayersAreIsolated 短路:数值本身即唯一控制点,若常量真被调错,
+        // 行为应自然表现为"越过年份层"(与维护者直觉一致),而不是国家层静默消失;
+        // 契约违规由 ScoreAll_CountryRankBase_StrictlyLessThanYearGapStep 在测试期拦住。
+        var countryLayer = IsForeignOfficial(release, preferredCountry)
             ? CountryRankBase
             : 0L;
 
